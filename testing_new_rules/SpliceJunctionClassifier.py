@@ -77,6 +77,8 @@ def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name,
 
 
                     """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
+                    """Quinn Comment: Coordinates from PERIND file and GTF file are exon start and end coordinates, so 
+                    we must add 1 to length"""
                     startpos = (len(leftover)+exlen+1)%3
                     if strand == '+':
                         seq = Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))+leftover 
@@ -279,7 +281,8 @@ def parse_annotation(gtf_annot: str):
             continue 
         if dic['transcript_type'] != "protein_coding" and anntype == "UTR": 
             continue
-        start, end = int(dic['start']) - 1, int(dic['end']) # convert to BED format
+        """Quinn: CONVERT TO BED FORMAT IS ERROR"""
+        start, end = int(dic['start']), int(dic['end']) # convert to BED format
         strand = dic['strand']
     
         if (chrom, strand) not in genes_coords:
@@ -415,7 +418,10 @@ def ClassifySpliceJunction(options):
 
     gtf_annot, rundir, outprefix = options.annot, options.rundir, options.outprefix
     verbose = False or options.verbose
-    perind_file = f"{rundir}/{outprefix}_perind.counts.gz"
+    if options.countfile is None:
+        perind_file = f"{rundir}/{outprefix}_perind.counts.gz"
+    else:
+        perind_file = options.countfile
 
     # read leafcutter perind file and store junctions in dictionary: dic_junc
     # key = (chrom,strand), value = list of junctions [(start,end)]
