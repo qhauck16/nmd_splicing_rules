@@ -1,6 +1,23 @@
 # SpliceJunctionClassified V0.1 (Updated Jan 2024)
 # Written by Yang Li Nov-2023
-# Updates by Quinn Hauck Jun-2024
+
+def tx_by_gene(gtf_annot):
+    transcripts_by_gene = {}
+    i = 1
+    for dic in parse_gtf(gtf_annot):
+        if dic['type'] == 'transcript':
+            if dic['gene_name'] not in transcripts_by_gene:
+                transcripts_by_gene[dic['gene_name']] = {dic['transcript_name']: []}
+            else:
+                transcripts_by_gene[dic['gene_name']] = transcripts_by_gene[dic['gene_name']] | {dic['transcript_name']: []}
+        if dic['type'] == 'start_codon':
+            insort(transcripts_by_gene[dic['gene_name']][dic['transcript_name']], (dic['end']))
+        if dic['type'] == 'stop_codon':
+            insort(transcripts_by_gene[dic['gene_name']][dic['transcript_name']], (dic['start']))
+        if dic['type'] == 'exon':
+            insort(transcripts_by_gene[dic['gene_name']][dic['transcript_name']], (dic['start']))
+            insort(transcripts_by_gene[dic['gene_name']][dic['transcript_name']], (dic['end']))
+    return transcripts_by_gene
 
 def ptc_pos_from_prot(prot, sub):
     to_return = []
@@ -10,8 +27,105 @@ def ptc_pos_from_prot(prot, sub):
         if start == -1: return to_return
         else:
             to_return.append(start)
-        start += 1   
-   
+        start += 1
+
+
+def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
+    long_exons = []
+    for junc in failing_juncs:
+        junc_added = False
+        possible_transcripts = transcripts_by_gene[gene_name]
+        for transcript in possible_transcripts:
+            s = list(possible_transcripts[transcript])
+            #cast to list of integers
+            s = [eval(j) for j in s]
+            
+            if strand == '-':
+                s.reverse()
+
+            new_junc = False
+            failing_junc = False
+            for i in range(len(s)-2, 0, -2):
+                junction = tuple([s[i-1], s[i]])
+
+                #overlapping 3' or 5' splice site, just replace the junction
+                if junc[0] == junction[0] or junc[1] == junction[1]:
+                    s[i-1] = junc[0]
+                    s[i] = junc[1]
+                    new_junc = True
+                #if this does not fit in our transcript, move on
+                    if strand == '+' and not (s[i-1] > s[i-2] and s[i] < s[i+1]):
+                        failing_junc = True
+                    elif strand == '-' and not (s[i-1] < s[i-2] and s[i] > s[i+1]):
+                        failing_junc = True
+                    
+                    break  
+
+            #If our overlapping site configuration fails in the transcript, skip this transcript     
+            if failing_junc:
+                continue
+            
+            s.reverse()
+            allprot = Seq("")
+            leftover = Seq("")
+
+            bool_long_exon = False
+            for i in range(0, len(s)-1, 2):
+                exon_coord = s[i:i+2]
+                exon_coord.sort()
+                exon_coord = tuple(exon_coord)
+                exlen = int(exon_coord[1])-int(exon_coord[0])
+
+
+                """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
+                """Quinn Comment: Coordinates from PERIND file and GTF file are exon start and end coordinates, so 
+                we must add 1 to length"""
+                startpos = (len(leftover)+exlen+1)%3
+
+                if strand == '+':
+                    seq = Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))+leftover 
+                    prot = seq[startpos:].translate()
+                    leftover = seq[:startpos]                                                                                                               
+
+                    if i == 0:
+                        bool_ptc = "*" in prot[:-1]
+                        ptc_pos = ptc_pos_from_prot(prot[:-1], '*')
+                    else:
+                        bool_ptc = "*" in prot 
+                        ptc_pos = ptc_pos_from_prot(prot, '*')
+
+                    allprot = prot+allprot
+                else:
+                    seq = leftover+Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
+                    aseq = seq
+                    if startpos > 0:
+                        leftover = seq[-startpos:]
+                    else:
+                        leftover = Seq("")
+                    seq = seq.reverse_complement()
+                    prot = seq[startpos:].translate()
+                    if i == 0:
+                        bool_ptc = "*" in prot[:-1]
+                        ptc_pos = ptc_pos_from_prot(prot[:-1], '*')
+                    else:
+                        bool_ptc = "*" in prot
+                        ptc_pos = ptc_pos_from_prot(prot, '*')
+
+                    allprot = prot+allprot
+                
+                #store a long_exon tag, only add this junction to list if it goes on to cause no PTCs that are not in long exons
+                if bool_ptc and new_junc and i != 0:
+                    ptc_coords = [exon_coord[0] + startpos + 3*x for x in ptc_pos]
+                    if exlen+1 > 407:
+                        bool_long_exon = True
+                    else:
+                        break
+                if bool_long_exon and i == len(s) - 2:
+                    long_exons.append(junc)
+                    junc_added = True
+            if junc_added:
+                break
+    return long_exons
 
 def check_utrs(junc,utrs):
     '''
@@ -23,12 +137,12 @@ def check_utrs(junc,utrs):
     return False
 
 def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name, 
-              verbose = True, exonLcutoff = 1000):
+              verbose = False, exonLcutoff = 1000):
     '''
     Compute whether there is a possible combination that uses the junction without
     inducing a PTC. We start with all annotated stop codon and go backwards.
     '''
-    
+
     global fa
     
     seed = []
@@ -47,15 +161,15 @@ def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name,
 
     # seed starts with just stop codon and then a possible 3'ss-5'ss junction
     # without introducing a PTC [stop_codon,3'ss, 5'ss, 3'ss, ..., start_codon]
-
-    junc_pass = {'normal':{}, 'long_exon':{}}
+    
+    seq_db = {}
+    junc_pass = {}
     junc_fail = {}
-    path_pass = {'normal':[], 'long_exon':[]}
+    path_pass = []
     proteins = []
-    short_ptcs = []
-    final_check = []
-
-    dic_terminus = {'normal': {}, 'long_exon': {}}
+    
+    dic_terminus = {}
+    dic_paths = {}
 
     depth = 0
 
@@ -63,6 +177,7 @@ def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name,
     all junctions ending in a stop codon (or there is an exon longer than 1000 bp and we have no complete paths)"""
     while len(seed) > 0:
         new_seed = []
+        final_check = []
         depth += 1
         if verbose:
             sys.stdout.write("Depth %s, Seed L = %s\n"%(depth, len(seed)))
@@ -73,14 +188,12 @@ def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name,
             # first check that the seed paths are good        
             bool_ptc = False
             leftover = ''
-            long_ptcs = []
             if len(s) > 0:                
                 leftover = Seq("")
                 allprot = Seq("")
 
                 """Quinn Comment: loop through the exons, calculating lengths"""
                 for i in range(0, len(s)-1, 2):
-                    short = []
                     exon_coord = s[i:i+2]
                     exon_coord.sort()
                     exon_coord = tuple(exon_coord)
@@ -88,74 +201,27 @@ def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name,
 
 
                     """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
+                    """Quinn Comment: Coordinates from PERIND file and GTF file are exon start and end coordinates, so 
+                    we must add 1 to length"""
                     startpos = (len(leftover)+exlen+1)%3
                     if strand == '+':
                         seq = Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))+leftover 
-                        #Last exon rule, part of 50-55nt rule
-                        if i == 0:
-                            prot = seq[startpos:].translate(stop_symbol = '#')
-                        #long exon rule
-                        elif exlen + 1 > 407:
-                            prot = seq[startpos:].translate(stop_symbol = '@')
-                            ptc_pos = ptc_pos_from_prot(prot, '@')
-                            long_ptcs.append([exon_coord[0] + startpos + 3*x for x in ptc_pos])
-                        else:
-                            prot = seq[startpos:].translate()
-
-                            #store ptc position for checking with long_exon PTCs later
-                            ptc_pos = ptc_pos_from_prot(prot, '*')
-                            ptc_coord = [exon_coord[0] + startpos + 3*x for x in ptc_pos]
-                            for k in ptc_coord:
-                                short.append(k)
-                        #50-55nt rule
-                        if i == 2:
-                            ptc_pos = ptc_pos_from_prot(prot, '@') + ptc_pos_from_prot(prot, '*')
-                            close_to_ejc = [(len(prot) - 1)*3 - 3*x - len(leftover) < 56 for x in ptc_pos]
-                            if sum(close_to_ejc) == len(close_to_ejc):
-                                prot = seq[startpos:].translate(stop_symbol = '#')
-                                #don't want to store long or short ptc position if they pass 50-55nt rule
-                                long_ptcs = []
-                                short = []
-
+                        prot = seq[startpos:].translate()
                         leftover = seq[:startpos]                                                                                                               
                         allprot = prot+allprot  
                     else:
                         seq = leftover+Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
+                        aseq = seq
                         if startpos > 0:
                             leftover = seq[-startpos:]
                         else:
                             leftover = Seq("")
                         seq = seq.reverse_complement()
-                        
-                        if i == 0:
-                            prot = seq[startpos:].translate(stop_symbol = '#')
-                        elif exlen + 1 > 407:
-                            prot = seq[startpos:].translate(stop_symbol = '@')
-                            ptc_pos = ptc_pos_from_prot(prot, '@')
-                            long_ptcs.append([exon_coord[1] - startpos - 3*x for x in ptc_pos])
-                        else:
-                            prot = seq[startpos:].translate()
-                            ptc_pos = ptc_pos_from_prot(prot, '*')
-                            ptc_coord = [exon_coord[1] - startpos - 3*x for x in ptc_pos]
-                            for k in ptc_coord:
-                                short.append(k)
-                        if i == 2:
-                            ptc_pos = ptc_pos_from_prot(prot, '@') + ptc_pos_from_prot(prot, '*')
-                            close_to_ejc = [(len(prot) - 1)*3 - 3*x - len(leftover) < 56 for x in ptc_pos]
-                            if sum(close_to_ejc) == len(close_to_ejc):
-                                prot = seq[startpos:].translate(stop_symbol = '#')
-                                long_ptcs = []
-                                short = []
+                        prot = seq[startpos:].translate()
                         allprot = prot+allprot
-                        short_ptcs = short_ptcs + short
 
                     #found a PTC in this transcript if any element but the last is a stop codon    
                     bool_ptc = "*" in allprot[:-1]
-                    bool_long_exon = '@' in allprot[:-1]
-
-                    
-
-
 
             """Quinn Comment: if we found a PTC, add all intron coordinate pairs involved in the transcript to junc_fail"""        
             if bool_ptc:
@@ -172,28 +238,21 @@ def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name,
         
             # passed
             """Quinn Comment: if we don't just have a stop codon, create a terminus for this 
-            seed: terminus is last two coordinates and the reading frame, 
+            seed at the last 3' splice site or start codon; terminus is last two coordinates and the reading frame, 
             used for dynamic programming later"""
             if len(s) > 2:
                 terminus = (s[-2],s[-1],leftover)
                 
-                if not bool_long_exon:
-                    if terminus in dic_terminus['normal']:
-                        dic_terminus['normal'][terminus].append(tuple(s))
-                        continue
-                    else:
-                        dic_terminus['normal'][terminus] = [tuple(s)]
+                if terminus in dic_terminus:
+                    dic_terminus[terminus].append(tuple(s))
+                    continue
                 else:
-                    if terminus in dic_terminus['long_exon']:
-                        dic_terminus['long_exon'][terminus].append([tuple(s), long_ptcs])
-                        continue
-                    else:
-                        dic_terminus['long_exon'][terminus] = [[tuple(s), long_ptcs]]
+                    dic_terminus[terminus] = [tuple(s)]
             
             last_pos = s[-1]
-
+            
             """Quinn Comment: check the last position of our seed to see if it is close to a start codon, within a potential exon's length,
-            and add your seed plus this start codon to final_check """
+             and add your seed plus this start codon to final_check """
             for start in start_codons:                
                 #print("start", start, abs(last_pos-start[0]))
                 if strand == "+" and last_pos > start[0] and abs(last_pos-start[0]) < exonLcutoff:
@@ -208,119 +267,60 @@ def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name,
                 #print("junction", (j0,j1), abs(last_pos-j0))
                 if strand == "-" and last_pos < j0 and abs(last_pos-j0) < exonLcutoff: 
                     new_seed.append(s+[j0,j1])
-        
-        seed = new_seed
                     
-    """Quinn Comment: Exited from s in seed loop, now we check our final_checks of the full paths, we do not
-    eliminate paths based on presence of a PTC, rather we classify full complete paths without PTCs if they exist"""
-    # check that the possible final paths are good
-    for s in final_check:
-        leftover = Seq("")
-        allprot = Seq("")
-        for i in range(0, len(s)-1, 2):
-            exon_coord = s[i:i+2]
-            exon_coord.sort()
-            exon_coord = tuple(exon_coord)
-            exlen = exon_coord[1]-exon_coord[0]
-            startpos = (len(leftover)+exlen+1)%3
-            if strand == "+":
-                seq = Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))+leftover
-                leftover = seq[:startpos] 
-                #last exon rule, part of 50-55nt rule
-                if i == 0:
-                    prot = seq[startpos:].translate(stop_symbol = '#')
-                elif exlen + 1 > 407:
-                    prot = seq[startpos:].translate(stop_symbol = '@')
-                    #only allow long_exon tag to persist if PTCs introduced are solely present in a long exon 
-                    ptc_pos = ptc_pos_from_prot(prot, '@')
-                    ptc_coord = [exon_coord[0] + startpos + 3*x for x in ptc_pos]
-                    check = [k in short_ptcs for k in ptc_coord]
-                    if sum(check) > 0:
-                        prot = seq[startpos:].translate()
-                else:
+        """Quinn Comment: Exited from s in seed loop, now we check our final_checks of the full paths, we do not
+        eliminate paths based on presence of a PTC, rather we classify full complete paths without PTCs if they exist"""
+        # check that the possible final paths are good
+        for s in final_check:
+            leftover = Seq("")
+            allprot = Seq("")
+            for i in range(0, len(s)-1, 2):
+                exon_coord = s[i:i+2]
+                exon_coord.sort()
+                exon_coord = tuple(exon_coord)
+                exlen = exon_coord[1]-exon_coord[0]
+                startpos = (len(leftover)+exlen+1)%3
+                if strand == "+":
+                    seq = Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))+leftover
+                    leftover = seq[:startpos]  
                     prot = seq[startpos:].translate()
-
-                #50-55nt rule, only apply changes if all stop codons in this exon pass this rule
-                if i == 2:
-                    ptc_pos = ptc_pos_from_prot(prot, '@') + ptc_pos_from_prot(prot, '*')
-                    close_to_ejc = [(len(prot) - 1)*3 - 3*x - len(leftover) < 56 for x in ptc_pos]
-                    if sum(close_to_ejc) == len(close_to_ejc):
-                        prot = seq[startpos:].translate(stop_symbol = '#')
-                allprot = prot+allprot
-
-            else:
-                seq = leftover+Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
-                if startpos > 0:                                                                                                    
-                    leftover = seq[-startpos:]                                    
+                    allprot = prot+allprot
                 else:
-                    leftover = Seq("")
-                seq = seq.reverse_complement() 
-                if i == 0:
-                    prot = seq[startpos:].translate(stop_symbol = '#')                                                                                                        
-                elif exlen + 1 > 407:
-                    prot = seq[startpos:].translate(stop_symbol = '@')
-                    ptc_pos = ptc_pos_from_prot(prot, '@')
-                    ptc_coord = [exon_coord[0] - startpos - 3*x for x in ptc_pos]
-                    check = [k in short_ptcs for k in ptc_coord]
-                    if sum(check) > 0:
-                        prot = seq[startpos:].translate()
-                else:
-                    prot = seq[startpos:].translate()
-
-                if i == 2:
-                    ptc_pos = ptc_pos_from_prot(prot, '@') + ptc_pos_from_prot(prot, '*')
-                    close_to_ejc = [(len(prot) - 1)*3 - 3*x - len(leftover) < 56 for x in ptc_pos]
-                    if sum(close_to_ejc) == len(close_to_ejc):
-                        prot = seq[startpos:].translate(stop_symbol = '#')
-
-                allprot = prot+allprot 
-
-        bool_ptc = "*" in allprot[:-1]
-        bool_long_exon = '@' in allprot[:-1]
-        bool_55nt_rule = '#' in allprot[:-1]
+                    seq = leftover+Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
+                    if startpos > 0:                                                                                                    
+                        leftover = seq[-startpos:]                                    
+                    else:
+                        leftover = Seq("")
+                    seq = seq.reverse_complement()                                                                                                           
+                    prot = seq[startpos:].translate()                                                                                                        
+                    allprot = prot+allprot                    
+            bool_ptc = "*" in allprot[:-1]
         
-        """Quinn Comment: Classify seed + start codon as a passing path if no PTCs found in previous block of code"""
-        if not bool_ptc:
-            # all pass
-            proteins.append("\t".join([gene_name,chrom,strand, "-".join([str(x) for x in s]), str(allprot)])+'\n')
-            #print("ALL PASS %s"%(s))
-            if bool_long_exon:
-                path_pass['long_exon'].append(tuple(s))
-            else:
-                path_pass['normal'].append(tuple(s))
-            for i in range(1, len(s), 2):
-                j_coord = s[i:i+2]
-                j_coord.sort()
-                j_coord = tuple(j_coord)
-                if not bool_long_exon: 
-                    if j_coord not in junc_pass['normal']:
-                        junc_pass['normal'][j_coord] = 0
-                    junc_pass['normal'][j_coord] += 1
-                else:
-                    if j_coord not in junc_pass['long_exon']:
-                        junc_pass['long_exon'][j_coord] = 0
-                    junc_pass['long_exon'][j_coord] += 1
+            """Quinn Comment: Classify seed + start codon as a passing path if no PTCs found in previous block of code"""
+            if not bool_ptc:
+                # all pass
+                proteins.append("\t".join([gene_name,chrom,strand, "-".join([str(x) for x in s]), str(allprot)])+'\n')
+                #print("ALL PASS %s"%(s))
+                path_pass.append(tuple(s))
+                for i in range(1, len(s), 2):
+                    j_coord = s[i:i+2]
+                    j_coord.sort()
+                    j_coord = tuple(j_coord)
+                    if j_coord not in junc_pass:
+                        junc_pass[j_coord] = 0
+                    junc_pass[j_coord] += 1
 
-        
-
-    #remove any paths that rely on a long_exon PTC that is also a short exon PTC
-    for k in dic_terminus['long_exon']:
-        to_remove = []
-        for v in dic_terminus['long_exon'][k]:
-            if len(v[0]) < 2: continue
-            if sum([x in short_ptcs for x in v[1]]) > 0:
-                to_remove.append(v)
-        for rem in to_remove:
-            dic_terminus['long_exon'][k].remove(rem)
-
+        seed = new_seed
+    
+    
     """Quinn Comment: OUT OF WHILE LOOP through all possible paths/seeds; 
-    check all termini to see if they are part of a full path that has been classified as passing"""
+    check all terminus' to see if they are part of a full path that has been classified as passing"""
     while True:
         new_paths = []
-        for terminus in dic_terminus['normal']:
+        for terminus in dic_terminus:
             terminus_pass = False
-            for path_subset in dic_terminus['normal'][terminus]:
-                for path in path_pass['normal']:
+            for path_subset in dic_terminus[terminus]:
+                for path in path_pass:
                     if path[:len(path_subset)] == path_subset:
                         terminus_pass = True
                         break
@@ -329,69 +329,24 @@ def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name,
             """Quinn Comment: if our terminus is part of a passing path, we want to make sure if is reflected in passing paths and
             add the associate junctions to junc_pass, only if they are not present"""
             if terminus_pass:
-                subsets_to_check = dic_terminus['normal'][terminus]
-                for path_subset in subsets_to_check:
-                    if path_subset in path_pass['normal']: continue
+                for path_subset in dic_terminus[terminus]:
+                    if path_subset in path_pass: continue
                     new_paths.append(path_subset)
-                    path_pass['normal'].append(path_subset)
+                    path_pass.append(path_subset)
                     for i in range(1, len(path_subset), 2):
                         j_coord = list(path_subset[i:i+2])
                         j_coord.sort()
                         j_coord = tuple(j_coord)
-                        if j_coord not in junc_pass['normal']:
-                            junc_pass['normal'][j_coord] = 0
+                        if j_coord not in junc_pass:
+                            junc_pass[j_coord] = 0
                             if verbose:
-                                sys.stdout.write("junction pass:" + str(j_coord))
-
-        """Quinn Comment: we could have a new path_pass added, so our while loop checks again to see if there are any new paths 
-        that are now going to be passing considering our additions"""
-        if len(new_paths) == 0:
-            break
-
-    #return long_exon terminus to standard state without PTCs
-    for key in dic_terminus['long_exon']:
-        to_keep = []
-        for path in dic_terminus['long_exon'][key]:
-            to_keep.append(path[0])
-        dic_terminus['long_exon'][key] = to_keep
-    #Now do the same for the long_exon termini and paths
-    #We do not care if a terminus is long_exon or not, as long as it ends up leading to a long_exon path
-    combined_keys = dic_terminus['long_exon'].keys() | dic_terminus['normal'].keys()
-    combined_termini = {key: dic_terminus['long_exon'].get(key, []) + dic_terminus['normal'].get(key, []) for key in combined_keys}  
-    while True:
-        new_paths = []
-        for terminus in combined_termini:
-            terminus_pass = False
-            for path_subset in combined_termini[terminus]:
-                for path in path_pass['long_exon']:
-                    if path[:len(path_subset)] == path_subset:
-                        terminus_pass = True
-                        break
-            #print(terminus, terminus_pass)
-
-            """Quinn Comment: if our terminus is part of a passing path, we want to make sure if is reflected in passing paths and
-            add the associate junctions to junc_pass, only if they are not present"""
-            if terminus_pass:
-                subsets_to_check = combined_termini[terminus]
-                for path_subset in subsets_to_check:
-                    if path_subset in path_pass['long_exon']: continue
-                    new_paths.append(path_subset)
-                    path_pass['long_exon'].append(path_subset)
-                    for i in range(1, len(path_subset), 2):
-                        j_coord = list(path_subset[i:i+2])
-                        j_coord.sort()
-                        j_coord = tuple(j_coord)
-                        if j_coord not in junc_pass['long_exon']:
-                            junc_pass['long_exon'][j_coord] = 0
-                            if verbose:
-                                sys.stdout.write("junction long_exon:" + str(j_coord))
-
+                                sys.stdout.write("junction %s pass\n"%j_coord)
         """Quinn Comment: we could have a new path_pass added, so our while loop checks again to see if there are any new paths 
         that are now going to be passing considering our additions"""
         if len(new_paths) == 0:
             break
             
-    return junc_pass, junc_fail, proteins
+    return junc_pass,junc_fail,proteins
 
 def parse_gtf(gtf: str):
     '''Lower level function to parse GTF file
@@ -450,6 +405,7 @@ def parse_annotation(gtf_annot: str):
             continue 
         if dic['transcript_type'] != "protein_coding" and anntype == "UTR": 
             continue
+        """Quinn: CONVERT TO BED FORMAT IS ERROR"""
         start, end = int(dic['start']), int(dic['end']) # convert to BED format
         strand = dic['strand']
     
@@ -471,7 +427,7 @@ def parse_annotation(gtf_annot: str):
         elif anntype in ['exon']:
             genes_info[tname]['exons'].append((start,end))
             # Store gene info for splice sites
-            ss2gene[(chrom, int(dic['start']))] = dic['gene_name'] # BED
+            ss2gene[(chrom, int(dic['start']) - 1)] = dic['gene_name'] # BED
             ss2gene[(chrom, int(dic['end']))] = dic['gene_name'] # BED
 
         elif anntype in ['UTR']:
@@ -625,6 +581,7 @@ def ClassifySpliceJunction(options):
         sys.stdout.write("Parsing annotations for the first time...\n")
         g_coords, g_info, ss2gene = parse_annotation(gtf_annot)
         
+    
         for chrom,strand in g_coords:
             to_remove_gcoords = set()
             to_remove_ginfo = set()
@@ -641,6 +598,8 @@ def ClassifySpliceJunction(options):
         sys.stdout.write("Saving parsed annotations...\n")
         with open(parsed_gtf, 'wb') as f:
             pickle.dump((g_coords, g_info), f)
+
+    transcripts_by_gene = tx_by_gene(gtf_annot)
 
     gene_juncs = {}
     for chrom,strand in dic_junc:
@@ -661,11 +620,9 @@ def ClassifySpliceJunction(options):
             gene_juncs[info].append(junc[0])
 
     fout = open(f"{rundir}/{outprefix}_junction_classifications.txt",'w')
-    fout.write("\t".join(["Gene_name","Intron_coord","Annot","Coding","UTR","Long_exon"])+'\n')
+    fout.write("\t".join(["Gene_name","Intron_coord","Annot","Coding", "UTR", "Long_exon"])+'\n')
     
     for gene_name, chrom, strand in gene_juncs:
-        if gene_name != 'CCNL2':
-            continue
         sys.stdout.write(f"Processing {gene_name} ({chrom}:{strand})\n")
         
         query_juncs = gene_juncs[(gene_name,chrom,strand)] # from LeafCutter perind file
@@ -681,16 +638,20 @@ def ClassifySpliceJunction(options):
         if verbose:
             sys.stdout.write(f"LeafCutter junctions ({len(query_juncs)}) All junctions ({len(junctions)}) Start codons ({len(start_codons)}) Stop codons ({len(stop_codons)}) \n")
 
-        print(chrom)
-        print(strand)
-        print(junctions)
-        print(start_codons)
-        print(stop_codons)
-        print(gene_name)
         junc_pass, junc_fail, proteins = solve_NMD(chrom,strand,junctions, 
                                                    start_codons, stop_codons, 
                                                    gene_name)
         
+
+        junc_fail = set(junc_fail.keys())
+        junc_pass = set(junc_pass.keys())
+        failing_juncs = junc_fail.difference(junc_pass)
+
+        old_junc_pass = junc_pass
+        junc_pass = {}
+        junc_pass['normal'] = old_junc_pass
+        junc_pass['long_exon'] = long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
+
         for j in junctions:
             bool_pass = j in junc_pass['normal'] or j in g_info[gene_name]['pcjunctions']
             bool_fail = j in junc_fail or j in junc_pass['long_exon']
@@ -773,11 +734,11 @@ def main(options):
     ClassifySpliceJunction(options)
 
     # for testing
-    sjc_file = f"{options.rundir}/{options.outprefix}_junction_classifications.txt"
-    print(f"Merging discordant logics in {sjc_file}...")
-    # print the first 10 items in the merged dictionary
-    sjc = merge_discordant_logics(sjc_file)
-    print(list(sjc.items())[:10])
+    # sjc_file = f"{options.rundir}/{options.outprefix}_junction_classifications.txt"
+    # print(f"Merging discordant logics in {sjc_file}...")
+    # # print the first 10 items in the merged dictionary
+    # sjc = merge_discordant_logics(sjc_file)
+    # print(list(sjc.items())[:10])
 
 
 if __name__ == "__main__":
