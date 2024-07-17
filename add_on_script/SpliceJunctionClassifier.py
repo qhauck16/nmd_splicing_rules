@@ -561,7 +561,7 @@ def ClassifySpliceJunction(options):
             dic_junc[(chrom,strand)] = []
         dic_junc[(chrom,strand)].append((int(start), int(end)))
 
-    sys.stdout.write("done!\n")
+    sys.stdout.write(" done!\n")
     if verbose:
         sys.stdout.write("Processed: ")
         for chrstrand in dic_junc:
@@ -572,11 +572,11 @@ def ClassifySpliceJunction(options):
     # g_coords: gene coordinates, grouped by chromosome and strand
     # g_info: a dictionary with (transcript_name, gene_name) as keys, and intron info as values
     try: 
-        sys.stdout.write("Loading annotations...\n")
+        sys.stdout.write("Loading annotations...")
         parsed_gtf = f"{rundir}/{gtf_annot.split('/')[-1].split('.gtf')[0]}_SJC_annotations.pckle"
         with open(parsed_gtf, 'rb') as f:
             g_coords, g_info = pickle.load(f)
-        sys.stdout.write("done!\n")
+        sys.stdout.write(" done!\n")
     except:
         sys.stdout.write("Parsing annotations for the first time...\n")
         g_coords, g_info, ss2gene = parse_annotation(gtf_annot)
@@ -599,7 +599,19 @@ def ClassifySpliceJunction(options):
         with open(parsed_gtf, 'wb') as f:
             pickle.dump((g_coords, g_info), f)
 
-    transcripts_by_gene = tx_by_gene(gtf_annot)
+
+    txn2gene = f"{rundir}/txn2gene.{gtf_annot.split('/')[-1].split('.gtf')[0]}_SJC_annotations.pckle"
+    try:
+        sys.stdout.write("Loading txn2gene annotations...")
+        with open(txn2gene, 'rb') as f:
+            transcripts_by_gene = pickle.load(f)
+    except:
+        sys.stdout.write("Failed... Making txn2gene annotations...\n")
+        transcripts_by_gene = tx_by_gene(gtf_annot)
+        with open(txn2gene, 'wb') as f:
+            pickle.dump(transcripts_by_gene, f)
+    #transcripts_by_gene = tx_by_gene(gtf_annot)
+    sys.stdout.write(" done!\n")
 
     gene_juncs = {}
     for chrom,strand in dic_junc:
@@ -723,7 +735,15 @@ def merge_discordant_logics(sjc_file: str):
 def main(options):
 
     if options.countfile is None:
-        sys.stderr.write("Error: no LeafCutter junction file provided...\npython SpliceJunctionClassifier.py -j Leafcutter_perind.counts.gz\n")
+        sys.stderr.write("Error: no LeafCutter junction file provided...\npython SpliceJunctionClassifier.py -c Leafcutter_perind.counts.gz\n")
+        exit(0)
+
+    if options.genome is None:
+        sys.stderr.write("Error: no genome fasta file selected...\npython SpliceJunctionClassifier.py -G genome.fa\n")
+        exit(0)
+
+    if options.annot is None:
+        sys.stderr.write("Error: no annotation file with gene start and stop codon...\npython SpliceJunctionClassifier.py -A gencode.gtf/ensembl.gtf\n")
         exit(0)
     
     global fa
