@@ -10,7 +10,7 @@ juncs.long.summary <- juncs.long %>%
   ungroup()
 
 
-new_annotations <- read_tsv('/project2/yangili1/qhauck/nmd_splicing_rules/add_on_script/Leaf2_junction_classifications.txt') %>%
+new_annotations <- read_tsv('/project2/yangili1/qhauck/nmd_splicing_rules/add_on_script/chr5_junction_classifications.txt') %>%
 #new_annotations <- read_tsv('/project2/yangili1/qhauck/nmd_splicing_rules/testing_new_rules/testing_long_exon/full_test_junction_classifications.txt') %>%
   separate(Intron_coord, into=c("chrom", "start", "end"), sep="[:-]", convert=T, remove = F) %>%
   add_count(Intron_coord, name="NumberOfEntriesWithSameCoords")

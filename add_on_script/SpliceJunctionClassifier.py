@@ -10,11 +10,7 @@ def tx_by_gene(gtf_annot):
                 transcripts_by_gene[dic['gene_name']] = {dic['transcript_name']: []}
             else:
                 transcripts_by_gene[dic['gene_name']] = transcripts_by_gene[dic['gene_name']] | {dic['transcript_name']: []}
-        if dic['type'] == 'start_codon':
-            insort(transcripts_by_gene[dic['gene_name']][dic['transcript_name']], (dic['end']))
-        if dic['type'] == 'stop_codon':
-            insort(transcripts_by_gene[dic['gene_name']][dic['transcript_name']], (dic['start']))
-        if dic['type'] == 'exon':
+        if dic['type'] == 'CDS':
             insort(transcripts_by_gene[dic['gene_name']][dic['transcript_name']], (dic['start']))
             insort(transcripts_by_gene[dic['gene_name']][dic['transcript_name']], (dic['end']))
     return transcripts_by_gene
@@ -29,9 +25,10 @@ def ptc_pos_from_prot(prot, sub):
             to_return.append(start)
         start += 1
 
+def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
 
-def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
-    long_exons = []
+    many_exons_before = []
+    many_exons_after = []
     for junc in failing_juncs:
         junc_added = False
         possible_transcripts = transcripts_by_gene[gene_name]
@@ -39,7 +36,7 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
             s = list(possible_transcripts[transcript])
             #cast to list of integers
             s = [eval(j) for j in s]
-            
+ 
             if strand == '-':
                 s.reverse()
 
@@ -53,6 +50,7 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
                     s[i-1] = junc[0]
                     s[i] = junc[1]
                     new_junc = True
+                    print(i)
                 #if this does not fit in our transcript, move on
                     if strand == '+' and not (s[i-1] > s[i-2] and s[i] < s[i+1]):
                         failing_junc = True
@@ -60,16 +58,15 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
                         failing_junc = True
                     
                     break  
-
             #If our overlapping site configuration fails in the transcript, skip this transcript     
-            if failing_junc:
+            if failing_junc or not new_junc:
                 continue
-            
             s.reverse()
             allprot = Seq("")
             leftover = Seq("")
 
-            bool_long_exon = False
+            bool_exons_after = False
+            bool_exons_before = False
             for i in range(0, len(s)-1, 2):
                 exon_coord = s[i:i+2]
                 exon_coord.sort()
@@ -106,15 +103,121 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
                     prot = seq[startpos:].translate()
                     if i == 0:
                         bool_ptc = "*" in prot[:-1]
-                        ptc_pos = ptc_pos_from_prot(prot[:-1], '*')
+                        #ptc_pos = ptc_pos_from_prot(prot[:-1], '*')
                     else:
                         bool_ptc = "*" in prot
-                        ptc_pos = ptc_pos_from_prot(prot, '*')
+                        #ptc_pos = ptc_pos_from_prot(prot, '*')
 
                     allprot = prot+allprot
                 
                 #store a long_exon tag, only add this junction to list if it goes on to cause no PTCs that are not in long exons
-                if bool_ptc and new_junc and i != 0:
+
+                exons_after = i/2
+                exons_before = (len(s) - 2)/2 - i/2
+                if bool_ptc and i != 0:
+                    #ptc_coords = [exon_coord[0] + startpos + 3*x for x in ptc_pos]
+                    if exons_before > 4:
+                        bool_exons_before = True
+                    if exons_after > 4:
+                        bool_exons_after = True
+                    else:
+                        break
+                if bool_exons_before or bool_exons_after and i == len(s) - 2:
+                    if bool_exons_before:
+                        many_exons_before.append(junc)
+                    if bool_exons_after:
+                        many_exons_after.append(junc)
+                    junc_added = True
+            if junc_added:
+                break
+    return many_exons_before, many_exons_after
+
+
+def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
+    long_exons = []
+    for junc in failing_juncs:
+        junc_added = False
+        possible_transcripts = transcripts_by_gene[gene_name]
+
+
+        for transcript in possible_transcripts:
+            s = list(possible_transcripts[transcript])
+            #cast to list of integers
+            s = [eval(j) for j in s]
+            
+            if s == []:
+                continue
+
+            if strand == '-':
+                s.reverse()
+
+            new_junc = False
+            failing_junc = False
+            for i in range(len(s)-2, 0, -2):
+                junction = tuple([s[i-1], s[i]])
+
+                #overlapping 3' or 5' splice site, just replace the junction
+                if junc[0] == junction[0] or junc[1] == junction[1]:
+                    s[i-1] = junc[0]
+                    s[i] = junc[1]
+                    new_junc = True
+                #if this does not fit in our transcript, move on
+                    if strand == '+' and not (s[i-1] > s[i-2] and s[i] < s[i+1]):
+                        failing_junc = True
+                    elif strand == '-' and not (s[i-1] < s[i-2] and s[i] > s[i+1]):
+                        failing_junc = True
+                    
+                    break  
+
+            #If our overlapping site configuration fails in the transcript, skip this transcript     
+            if failing_junc or not new_junc:
+                continue
+            
+            s.reverse()
+            allprot = Seq("")
+            leftover = Seq("")
+
+            bool_long_exon = False
+            for i in range(0, len(s)-1, 2):
+                exon_coord = s[i:i+2]
+                exon_coord.sort()
+                exon_coord = tuple(exon_coord)
+                exlen = int(exon_coord[1])-int(exon_coord[0])
+                if exlen > 1000:
+                    break
+
+                """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
+                """Quinn Comment: Coordinates from PERIND file and GTF file are exon start and end coordinates, so 
+                we must add 1 to length"""
+                startpos = (len(leftover)+exlen+1)%3
+
+                if strand == '+':
+                    seq = Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))+leftover 
+                    prot = seq[startpos:].translate()
+                    leftover = seq[:startpos]                                                                                                               
+
+
+                    bool_ptc = "*" in prot 
+                    ptc_pos = ptc_pos_from_prot(prot, '*')
+
+                    allprot = prot+allprot
+                else:
+                    seq = leftover+Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
+                    aseq = seq
+                    if startpos > 0:
+                        leftover = seq[-startpos:]
+                    else:
+                        leftover = Seq("")
+                    seq = seq.reverse_complement()
+                    prot = seq[startpos:].translate()
+
+                    bool_ptc = "*" in prot
+                    ptc_pos = ptc_pos_from_prot(prot, '*')
+
+                    allprot = prot+allprot
+                
+                #store a long_exon tag, only add this junction to list if it goes on to cause no PTCs that are not in long exons
+                if bool_ptc and i != 0:
                     ptc_coords = [exon_coord[0] + startpos + 3*x for x in ptc_pos]
                     if exlen+1 > 407:
                         bool_long_exon = True
@@ -632,7 +735,7 @@ def ClassifySpliceJunction(options):
             gene_juncs[info].append(junc[0])
 
     fout = open(f"{rundir}/{outprefix}_junction_classifications.txt",'w')
-    fout.write("\t".join(["Gene_name","Intron_coord","Annot","Coding", "UTR", "Long_exon"])+'\n')
+    fout.write("\t".join(["Gene_name","Intron_coord","Annot","Coding", "UTR", "Long_exon", "Exons_before", "Exons_after"])+'\n')
     
     for gene_name, chrom, strand in gene_juncs:
         sys.stdout.write(f"Processing {gene_name} ({chrom}:{strand})\n")
@@ -663,12 +766,15 @@ def ClassifySpliceJunction(options):
         junc_pass = {}
         junc_pass['normal'] = old_junc_pass
         junc_pass['long_exon'] = long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
+        junc_pass['exons_before'], junc_pass['exons_after'] = many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
 
         for j in junctions:
             bool_pass = j in junc_pass['normal'] or j in g_info[gene_name]['pcjunctions']
-            bool_fail = j in junc_fail or j in junc_pass['long_exon']
+            bool_fail = j in failing_juncs
             utr = False
-            long_exon = j in junc_pass['long_exon'] and not bool_pass
+            long_exon = j in junc_pass['long_exon'] and j not in g_info[gene_name]['pcjunctions']
+            exons_before = j in junc_pass['exons_before'] and j not in g_info[gene_name]['pcjunctions']
+            exons_after = j in junc_pass['exons_after'] and j not in g_info[gene_name]['pcjunctions']
             if not bool_pass:
                 # Check that it's not in UTR                
                 utr = check_utrs(j,g_info[gene_name]['utrs'])
@@ -682,7 +788,7 @@ def ClassifySpliceJunction(options):
             #print("%s %s %s junction: %s tested: %s utr: %s coding: %s annotated: %s "%(chrom, strand, gene_name, j, tested,utr, bool_pass, annotated))
             
             fout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
-                                  str(annotated), str(bool_pass), str(utr), str(long_exon)])+'\n')
+                                  str(annotated), str(bool_pass), str(utr), str(long_exon), str(exons_before), str(exons_after)])+'\n')
         
 
 def boolean_to_bit(bool_vec):
