@@ -68,11 +68,12 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
             bool_exons_after = False
             bool_exons_before = False
             for i in range(0, len(s)-1, 2):
+                if exlen > 1000:
+                    break
                 exon_coord = s[i:i+2]
                 exon_coord.sort()
                 exon_coord = tuple(exon_coord)
                 exlen = int(exon_coord[1])-int(exon_coord[0])
-
 
                 """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
                 """Quinn Comment: Coordinates from PERIND file and GTF file are exon start and end coordinates, so 
@@ -118,10 +119,12 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
                     #ptc_coords = [exon_coord[0] + startpos + 3*x for x in ptc_pos]
                     if exons_before > 4:
                         bool_exons_before = True
+                    else:
+                        bool_exons_before = False
                     if exons_after > 4:
                         bool_exons_after = True
                     else:
-                        break
+                        bool_exons_after = False
                 if bool_exons_before or bool_exons_after and i == len(s) - 2:
                     if bool_exons_before:
                         many_exons_before.append(junc)
