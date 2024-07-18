@@ -37,8 +37,6 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
             #cast to list of integers
             s = [eval(j) for j in s]
  
-            if strand == '-':
-                s.reverse()
 
             new_junc = False
             failing_junc = False
@@ -52,28 +50,28 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
                     new_junc = True
                     print(i)
                 #if this does not fit in our transcript, move on
-                    if strand == '+' and not (s[i-1] > s[i-2] and s[i] < s[i+1]):
-                        failing_junc = True
-                    elif strand == '-' and not (s[i-1] < s[i-2] and s[i] > s[i+1]):
+                    if not (s[i-1] > s[i-2] and s[i] < s[i+1]):
                         failing_junc = True
                     
                     break  
             #If our overlapping site configuration fails in the transcript, skip this transcript     
             if failing_junc or not new_junc:
                 continue
-            s.reverse()
+
+            if strand == '+':
+                s.reverse()
             allprot = Seq("")
             leftover = Seq("")
 
             bool_exons_after = False
             bool_exons_before = False
             for i in range(0, len(s)-1, 2):
-                if exlen > 1000:
-                    break
                 exon_coord = s[i:i+2]
                 exon_coord.sort()
                 exon_coord = tuple(exon_coord)
                 exlen = int(exon_coord[1])-int(exon_coord[0])
+                if exlen > 1000:
+                    break
 
                 """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
                 """Quinn Comment: Coordinates from PERIND file and GTF file are exon start and end coordinates, so 
@@ -151,9 +149,6 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
             if s == []:
                 continue
 
-            if strand == '-':
-                s.reverse()
-
             new_junc = False
             failing_junc = False
             for i in range(len(s)-2, 0, -2):
@@ -165,9 +160,7 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
                     s[i] = junc[1]
                     new_junc = True
                 #if this does not fit in our transcript, move on
-                    if strand == '+' and not (s[i-1] > s[i-2] and s[i] < s[i+1]):
-                        failing_junc = True
-                    elif strand == '-' and not (s[i-1] < s[i-2] and s[i] > s[i+1]):
+                    if not (s[i-1] > s[i-2] and s[i] < s[i+1]):
                         failing_junc = True
                     
                     break  
@@ -175,8 +168,9 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
             #If our overlapping site configuration fails in the transcript, skip this transcript     
             if failing_junc or not new_junc:
                 continue
-            
-            s.reverse()
+
+            if strand == '+':
+                s.reverse()
             allprot = Seq("")
             leftover = Seq("")
 
