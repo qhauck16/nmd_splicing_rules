@@ -135,6 +135,8 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
 
 
 def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
+    ptc_exon_lens = []
+    ptc_distances = []
     long_exons = []
     for junc in failing_juncs:
         junc_added = False
@@ -195,12 +197,13 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
 
 
                     bool_ptc = "*" in prot 
-                    ptc_pos = ptc_pos_from_prot(prot, '*')
+                    if bool_ptc:
+                        ptc_pos = ptc_pos_from_prot(prot, '*')
+                        ptc_prot_len = len(prot) 
 
                     allprot = prot+allprot
                 else:
                     seq = leftover+Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
-                    aseq = seq
                     if startpos > 0:
                         leftover = seq[-startpos:]
                     else:
@@ -209,13 +212,14 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
                     prot = seq[startpos:].translate()
 
                     bool_ptc = "*" in prot
-                    ptc_pos = ptc_pos_from_prot(prot, '*')
+                    if bool_ptc:
+                        ptc_pos = ptc_pos_from_prot(prot, '*')
+                        ptc_prot_len = len(prot) 
 
                     allprot = prot+allprot
                 
                 #store a long_exon tag, only add this junction to list if it goes on to cause no PTCs that are not in long exons
                 if bool_ptc and i != 0:
-                    ptc_coords = [exon_coord[0] + startpos + 3*x for x in ptc_pos]
                     if exlen+1 > 407:
                         bool_long_exon = True
                     else:
@@ -223,9 +227,13 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
                 if bool_long_exon and i == len(s) - 2:
                     long_exons.append(junc)
                     junc_added = True
+                    
+                    ptc_coord = (min(ptc_pos) + 1)*3
+                    ptc_distances.append(ptc_prot_len*3 - ptc_coord)
+                    ptc_exon_lens.append(ptc_prot_len*3)
             if junc_added:
                 break
-    return long_exons
+    return long_exons, ptc_distances, ptc_exon_lens
 
 def check_utrs(junc,utrs):
     '''
@@ -733,7 +741,9 @@ def ClassifySpliceJunction(options):
 
     fout = open(f"{rundir}/{outprefix}_junction_classifications.txt",'w')
     fout.write("\t".join(["Gene_name","Intron_coord","Annot","Coding", "UTR", "Long_exon", "Exons_before", "Exons_after"])+'\n')
-    
+    lout = open(f"{rundir}/{outprefix}_long_exon_distances.txt",'w')
+    lout.write("\t".join(["Gene_name","Intron_coord","PTC_position","Exon_length"])+'\n')
+
     for gene_name, chrom, strand in gene_juncs:
         sys.stdout.write(f"Processing {gene_name} ({chrom}:{strand})\n")
         
@@ -762,7 +772,7 @@ def ClassifySpliceJunction(options):
         old_junc_pass = junc_pass
         junc_pass = {}
         junc_pass['normal'] = old_junc_pass
-        junc_pass['long_exon'] = long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
+        junc_pass['long_exon'], ptc_distances, ptc_exon_lens = long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         junc_pass['exons_before'], junc_pass['exons_after'] = many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
 
         for j in junctions:
@@ -786,7 +796,11 @@ def ClassifySpliceJunction(options):
             
             fout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
                                   str(annotated), str(bool_pass), str(utr), str(long_exon), str(exons_before), str(exons_after)])+'\n')
-        
+            
+        for w in range(len(junc_pass['long_exon'])):
+            j = junc_pass['long_exon'][w]
+            lout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
+                                str(ptc_distances[w]), str(ptc_exon_lens[w])])+'\n')
 
 def boolean_to_bit(bool_vec):
     # Convert boolean vector to string of "1"s and "0"s
