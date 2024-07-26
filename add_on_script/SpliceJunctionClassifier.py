@@ -25,6 +25,108 @@ def ptc_pos_from_prot(prot, sub):
             to_return.append(start)
         start += 1
 
+
+def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
+    nuc_rule = []
+    for junc in failing_juncs:
+        junc_added = False
+        possible_transcripts = transcripts_by_gene[gene_name]
+
+
+        for transcript in possible_transcripts:
+            s = list(possible_transcripts[transcript])
+            #cast to list of integers
+            s = [eval(j) for j in s]
+            
+            if s == []:
+                continue
+
+            new_junc = False
+            failing_junc = False
+            for i in range(len(s)-2, 0, -2):
+                junction = tuple([s[i-1], s[i]])
+
+                #overlapping 3' or 5' splice site, just replace the junction
+                if junc[0] == junction[0] or junc[1] == junction[1]:
+                    s[i-1] = junc[0]
+                    s[i] = junc[1]
+                    new_junc = True
+                #if this does not fit in our transcript, move on
+                    if not (s[i-1] > s[i-2] and s[i] < s[i+1]):
+                        failing_junc = True
+                    
+                    break  
+
+            #If our overlapping site configuration fails in the transcript, skip this transcript     
+            if failing_junc or not new_junc:
+                continue
+
+            if strand == '+':
+                s.reverse()
+            allprot = Seq("")
+            leftover = Seq("")
+
+            bool_last_exon = False
+            bool_55nt = False
+            for i in range(0, len(s)-1, 2):
+                exon_coord = s[i:i+2]
+                exon_coord.sort()
+                exon_coord = tuple(exon_coord)
+                exlen = int(exon_coord[1])-int(exon_coord[0])
+                if exlen > 1000:
+                    break
+
+                """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
+                """Quinn Comment: Coordinates from PERIND file and GTF file are exon start and end coordinates, so 
+                we must add 1 to length"""
+                endpos = (len(leftover)+exlen+1)%3
+
+                if strand == '+':
+                    seq = leftover + Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
+                    prot = seq[:-endpos].translate()
+                    leftover = seq[-endpos:]                                                                                                               
+
+
+                    bool_ptc = "*" in prot 
+                    if bool_ptc:
+                        ptc_pos = ptc_pos_from_prot(prot, '*')
+                        ptc_prot_len = len(prot) 
+
+                    allprot = allprot+prot
+                else:
+                    seq = Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))+leftover
+                    if endpos > 0:
+                        leftover = seq[:endpos]
+                    else:
+                        leftover = Seq("")
+                    seq = seq.reverse_complement()
+                    prot = seq[:-endpos].translate()
+
+                    bool_ptc = "*" in prot
+                    if bool_ptc:
+                        ptc_pos = ptc_pos_from_prot(prot, '*')
+                        ptc_prot_len = len(prot) 
+
+                    allprot = allprot+prot
+                
+                #store a long_exon tag, only add this junction to list if it goes on to cause no PTCs that are not in long exons
+                if bool_ptc:
+                    ptc_coord = [(x + 1)*3 for x in ptc_pos]
+
+                    if i == 0:
+                        bool_last_exon = True
+                    elif i == 2 and ptc_prot_len*3-min(ptc_coord) < 55:
+                        bool_55nt = True
+                    else:
+                        break
+
+                if (bool_last_exon or bool_55nt) and i == len(s) - 2:
+                    junc_added = True
+                    nuc_rule.append(junc)
+            if junc_added:
+                break
+    return nuc_rule
+
 def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
 
     many_exons_before = []
@@ -58,7 +160,7 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
             if failing_junc or not new_junc:
                 continue
 
-            if strand == '+':
+            if strand == '-':
                 s.reverse()
             allprot = Seq("")
             leftover = Seq("")
@@ -76,43 +178,36 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
                 """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
                 """Quinn Comment: Coordinates from PERIND file and GTF file are exon start and end coordinates, so 
                 we must add 1 to length"""
-                startpos = (len(leftover)+exlen+1)%3
+                endpos = (len(leftover)+exlen+1)%3
 
                 if strand == '+':
-                    seq = Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))+leftover 
-                    prot = seq[startpos:].translate()
-                    leftover = seq[:startpos]                                                                                                               
+                    seq = leftover + Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
+                    prot = seq[:-endpos].translate()
+                    leftover = seq[-endpos:]                                                                                                               
 
-                    if i == 0:
-                        bool_ptc = "*" in prot[:-1]
-                        ptc_pos = ptc_pos_from_prot(prot[:-1], '*')
-                    else:
-                        bool_ptc = "*" in prot 
-                        ptc_pos = ptc_pos_from_prot(prot, '*')
 
-                    allprot = prot+allprot
+                    bool_ptc = "*" in prot 
+
+
+                    allprot = allprot+prot
                 else:
-                    seq = leftover+Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
-                    aseq = seq
-                    if startpos > 0:
-                        leftover = seq[-startpos:]
+                    seq = Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))+leftover
+                    if endpos > 0:
+                        leftover = seq[:endpos]
                     else:
                         leftover = Seq("")
                     seq = seq.reverse_complement()
-                    prot = seq[startpos:].translate()
-                    if i == 0:
-                        bool_ptc = "*" in prot[:-1]
-                        #ptc_pos = ptc_pos_from_prot(prot[:-1], '*')
-                    else:
-                        bool_ptc = "*" in prot
-                        #ptc_pos = ptc_pos_from_prot(prot, '*')
+                    prot = seq[:-endpos].translate()
 
-                    allprot = prot+allprot
+                    bool_ptc = "*" in prot
+                        
+
+                    allprot = allprot+prot
                 
                 #store a long_exon tag, only add this junction to list if it goes on to cause no PTCs that are not in long exons
 
-                exons_after = i/2
-                exons_before = (len(s) - 2)/2 - i/2
+                exons_after = (len(s) - 2)/2 - i/2
+                exons_before = i/2
                 if bool_ptc and i != 0:
                     #ptc_coords = [exon_coord[0] + startpos + 3*x for x in ptc_pos]
                     if exons_before > 4:
@@ -171,7 +266,7 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
             if failing_junc or not new_junc:
                 continue
 
-            if strand == '+':
+            if strand == '-':
                 s.reverse()
             allprot = Seq("")
             leftover = Seq("")
@@ -188,12 +283,12 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
                 """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
                 """Quinn Comment: Coordinates from PERIND file and GTF file are exon start and end coordinates, so 
                 we must add 1 to length"""
-                startpos = (len(leftover)+exlen+1)%3
+                endpos = (len(leftover)+exlen+1)%3
 
                 if strand == '+':
-                    seq = Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))+leftover 
-                    prot = seq[startpos:].translate()
-                    leftover = seq[:startpos]                                                                                                               
+                    seq = leftover + Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
+                    prot = seq[:-endpos].translate()
+                    leftover = seq[-endpos:]                                                                                                               
 
 
                     bool_ptc = "*" in prot 
@@ -201,37 +296,38 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
                         ptc_pos = ptc_pos_from_prot(prot, '*')
                         ptc_prot_len = len(prot) 
 
-                    allprot = prot+allprot
+                    allprot = allprot+prot
                 else:
-                    seq = leftover+Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
-                    if startpos > 0:
-                        leftover = seq[-startpos:]
+                    seq = Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))+leftover
+                    if endpos > 0:
+                        leftover = seq[:endpos]
                     else:
                         leftover = Seq("")
                     seq = seq.reverse_complement()
-                    prot = seq[startpos:].translate()
+                    prot = seq[:-endpos].translate()
 
                     bool_ptc = "*" in prot
                     if bool_ptc:
                         ptc_pos = ptc_pos_from_prot(prot, '*')
                         ptc_prot_len = len(prot) 
 
-                    allprot = prot+allprot
+                    allprot = allprot+prot
                 
                 #store a long_exon tag, only add this junction to list if it goes on to cause no PTCs that are not in long exons
-                if bool_ptc and i != 0:
-                    if exlen+1 > 407:
+                if bool_ptc and i != len(s)-2:
+                    ptc_coord = (min(ptc_pos) + 1)*3
+                    #55nt rule
+                    if i == len(s)-4 and ptc_prot_len*3-ptc_coord < 55:
+                        break
+                    elif exlen + 1 > 407:
                         bool_long_exon = True
+                        break
                     else:
                         break
-                if bool_long_exon and i == len(s) - 2:
-                    long_exons.append(junc)
-                    junc_added = True
-                    
-                    ptc_coord = (min(ptc_pos) + 1)*3
-                    ptc_distances.append(ptc_prot_len*3 - ptc_coord)
-                    ptc_exon_lens.append(ptc_prot_len*3)
-            if junc_added:
+            if bool_long_exon:
+                long_exons.append(junc)
+                ptc_distances.append(ptc_prot_len*3 - ptc_coord)
+                ptc_exon_lens.append(ptc_prot_len*3)
                 break
     return long_exons, ptc_distances, ptc_exon_lens
 
@@ -740,7 +836,7 @@ def ClassifySpliceJunction(options):
             gene_juncs[info].append(junc[0])
 
     fout = open(f"{rundir}/{outprefix}_junction_classifications.txt",'w')
-    fout.write("\t".join(["Gene_name","Intron_coord","Annot","Coding", "UTR", "Long_exon", "Exons_before", "Exons_after"])+'\n')
+    fout.write("\t".join(["Gene_name","Intron_coord","Annot","Coding", "UTR", "Long_exon", "Exons_before", "Exons_after","Nuc_rule"])+'\n')
     lout = open(f"{rundir}/{outprefix}_long_exon_distances.txt",'w')
     lout.write("\t".join(["Gene_name","Intron_coord","PTC_position","Exon_length"])+'\n')
 
@@ -774,7 +870,7 @@ def ClassifySpliceJunction(options):
         junc_pass['normal'] = old_junc_pass
         junc_pass['long_exon'], ptc_distances, ptc_exon_lens = long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         junc_pass['exons_before'], junc_pass['exons_after'] = many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
-
+        junc_pass['nuc_rule'] = nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         for j in junctions:
             bool_pass = j in junc_pass['normal'] or j in g_info[gene_name]['pcjunctions']
             bool_fail = j in failing_juncs
@@ -782,6 +878,7 @@ def ClassifySpliceJunction(options):
             long_exon = j in junc_pass['long_exon'] and j not in g_info[gene_name]['pcjunctions']
             exons_before = j in junc_pass['exons_before'] and j not in g_info[gene_name]['pcjunctions']
             exons_after = j in junc_pass['exons_after'] and j not in g_info[gene_name]['pcjunctions']
+            nuc_rule = j in junc_pass['nuc_rule'] and j not in g_info[gene_name]['pcjunctions']
             if not bool_pass:
                 # Check that it's not in UTR                
                 utr = check_utrs(j,g_info[gene_name]['utrs'])
@@ -795,7 +892,7 @@ def ClassifySpliceJunction(options):
             #print("%s %s %s junction: %s tested: %s utr: %s coding: %s annotated: %s "%(chrom, strand, gene_name, j, tested,utr, bool_pass, annotated))
             
             fout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
-                                  str(annotated), str(bool_pass), str(utr), str(long_exon), str(exons_before), str(exons_after)])+'\n')
+                                  str(annotated), str(bool_pass), str(utr), str(long_exon), str(exons_before), str(exons_after), str(nuc_rule)])+'\n')
             
         for w in range(len(junc_pass['long_exon'])):
             j = junc_pass['long_exon'][w]
