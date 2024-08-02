@@ -27,9 +27,12 @@ def ptc_pos_from_prot(prot, sub):
 
 
 def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
+    qualifying_prots = {'prot': [], 'gene': [], 'junction': [], 'transcript': []}
+    distances = []
     nuc_rule = []
     for junc in failing_juncs:
-        junc_added = False
+        junc_break = False
+        distances_to_ejc = []
         possible_transcripts = transcripts_by_gene[gene_name]
 
 
@@ -37,7 +40,6 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
             s = list(possible_transcripts[transcript])
             #cast to list of integers
             s = [eval(j) for j in s]
-            
             if s == []:
                 continue
 
@@ -61,7 +63,7 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
             if failing_junc or not new_junc:
                 continue
 
-            if strand == '+':
+            if strand == '-':
                 s.reverse()
             allprot = Seq("")
             leftover = Seq("")
@@ -83,7 +85,10 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
 
                 if strand == '+':
                     seq = leftover + Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
-                    prot = seq[:-endpos].translate()
+                    if endpos == 0:
+                        prot = seq.translate()
+                    else:
+                        prot = seq[:-endpos].translate()
                     leftover = seq[-endpos:]                                                                                                               
 
 
@@ -100,7 +105,10 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
                     else:
                         leftover = Seq("")
                     seq = seq.reverse_complement()
-                    prot = seq[:-endpos].translate()
+                    if endpos == 0:
+                        prot = seq.translate()
+                    else:
+                        prot = seq[:-endpos].translate()
 
                     bool_ptc = "*" in prot
                     if bool_ptc:
@@ -109,31 +117,58 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
 
                     allprot = allprot+prot
                 
-                #store a long_exon tag, only add this junction to list if it goes on to cause no PTCs that are not in long exons
                 if bool_ptc:
                     ptc_coord = [(x + 1)*3 for x in ptc_pos]
-
-                    if i == 0:
-                        bool_last_exon = True
-                    elif i == 2 and ptc_prot_len*3-min(ptc_coord) < 55:
-                        bool_55nt = True
-                    else:
+                    if i != len(s)-2 and i != len(s) - 4:
+                        junc_break = True
                         break
-
-                if (bool_last_exon or bool_55nt) and i == len(s) - 2:
-                    junc_added = True
-                    nuc_rule.append(junc)
-            if junc_added:
+                    else:
+                        if i == len(s) - 2:
+                            distances_to_ejc.append(-1)
+                            qualifying_prots['prot'].append(allprot)
+                            qualifying_prots['gene'].append(gene_name)
+                            qualifying_prots['junction'].append(junc)
+                            qualifying_prots['transcript'].append(possible_transcripts[transcript])
+                            break
+                        else:
+                            distances_to_ejc.append(ptc_prot_len*3-min(ptc_coord))
+                            break
+                
+            if junc_break:
                 break
-    return nuc_rule
+        if not junc_break and len(distances_to_ejc) != 0:
+            nuc_rule.append(junc)
+            distances.append(mode(distances_to_ejc))
+            
+            #     if bool_ptc:
+            #         ptc_coord = [(x + 1)*3 for x in ptc_pos]
+
+            #         if i == len(s)-2:
+            #             bool_last_exon = True
+            #             distance_to_last_ejc = 0
+            #             break
+            #         elif i == len(s)-4: #and ptc_prot_len*3-min(ptc_coord) < 70:
+            #             bool_55nt = True
+            #             distance_to_last_ejc = ptc_prot_len*3-min(ptc_coord) 
+            #             break
+            #         else:
+            #             break
+
+            # if (bool_last_exon or bool_55nt):
+            #     nuc_rule.append(junc)
+            #     distances.append(distance_to_last_ejc)
+            #     break
+    return nuc_rule, distances, qualifying_prots
 
 def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
 
-    many_exons_before = []
-    many_exons_after = []
+    before = {}
+    after = {}
     for junc in failing_juncs:
         junc_added = False
         possible_transcripts = transcripts_by_gene[gene_name]
+        possible_exons_before = []
+        possible_exons_after = []
         for transcript in possible_transcripts:
             s = list(possible_transcripts[transcript])
             #cast to list of integers
@@ -150,7 +185,6 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
                     s[i-1] = junc[0]
                     s[i] = junc[1]
                     new_junc = True
-                    print(i)
                 #if this does not fit in our transcript, move on
                     if not (s[i-1] > s[i-2] and s[i] < s[i+1]):
                         failing_junc = True
@@ -165,8 +199,6 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
             allprot = Seq("")
             leftover = Seq("")
 
-            bool_exons_after = False
-            bool_exons_before = False
             for i in range(0, len(s)-1, 2):
                 exon_coord = s[i:i+2]
                 exon_coord.sort()
@@ -182,11 +214,18 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
 
                 if strand == '+':
                     seq = leftover + Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
-                    prot = seq[:-endpos].translate()
-                    leftover = seq[-endpos:]                                                                                                               
+                    if endpos == 0:
+                        prot = seq.translate()
+                    else:
+                        prot = seq[:-endpos].translate()
+                    leftover = seq[-endpos:]                                                                                                                
 
 
                     bool_ptc = "*" in prot 
+                    if bool_ptc:
+                        ptc_pos = ptc_pos_from_prot(prot, '*')
+                        ptc_prot_len = len(prot)
+                        ptc_coord = (min(ptc_pos) + 1)*3
 
 
                     allprot = allprot+prot
@@ -197,45 +236,42 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
                     else:
                         leftover = Seq("")
                     seq = seq.reverse_complement()
-                    prot = seq[:-endpos].translate()
+                    if endpos == 0:
+                        prot = seq.translate()
+                    else:
+                        prot = seq[:-endpos].translate()
 
                     bool_ptc = "*" in prot
+                    if bool_ptc:
+                        ptc_pos = ptc_pos_from_prot(prot, '*')
+                        ptc_prot_len = len(prot) 
+                        ptc_coord = (min(ptc_pos) + 1)*3 
                         
 
                     allprot = allprot+prot
-                
-                #store a long_exon tag, only add this junction to list if it goes on to cause no PTCs that are not in long exons
 
                 exons_after = (len(s) - 2)/2 - i/2
                 exons_before = i/2
-                if bool_ptc and i != 0:
-                    #ptc_coords = [exon_coord[0] + startpos + 3*x for x in ptc_pos]
-                    if exons_before > 4:
-                        bool_exons_before = True
-                    else:
-                        bool_exons_before = False
-                    if exons_after > 4:
-                        bool_exons_after = True
-                    else:
-                        bool_exons_after = False
-                if bool_exons_before or bool_exons_after and i == len(s) - 2:
-                    if bool_exons_before:
-                        many_exons_before.append(junc)
-                    if bool_exons_after:
-                        many_exons_after.append(junc)
-                    junc_added = True
-            if junc_added:
-                break
-    return many_exons_before, many_exons_after
+                if bool_ptc and i != len(s)-2 and not (i == len(s)-4 and ptc_prot_len*3 - ptc_coord < 55): #and 55 nt rule not satisfied
+                    possible_exons_before.append(exons_before)
+                    possible_exons_after.append(exons_after)
+                    break
+        if len(possible_exons_before) != 0:
+            before[junc] = mode(possible_exons_before)
+            after[junc] = mode(possible_exons_after)
+    return before, after
 
 
 def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
+    ptc_junctions = []
     ptc_exon_lens = []
     ptc_distances = []
     long_exons = []
     for junc in failing_juncs:
         junc_added = False
         possible_transcripts = transcripts_by_gene[gene_name]
+        possible_distances = []
+        possible_lens = []
 
 
         for transcript in possible_transcripts:
@@ -287,14 +323,18 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
 
                 if strand == '+':
                     seq = leftover + Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
-                    prot = seq[:-endpos].translate()
+                    if endpos == 0:
+                        prot = seq.translate()
+                    else:
+                        prot = seq[:-endpos].translate()
                     leftover = seq[-endpos:]                                                                                                               
 
 
                     bool_ptc = "*" in prot 
                     if bool_ptc:
                         ptc_pos = ptc_pos_from_prot(prot, '*')
-                        ptc_prot_len = len(prot) 
+                        ptc_prot_len = len(prot)
+                        ptc_coord = (min(ptc_pos) + 1)*3 
 
                     allprot = allprot+prot
                 else:
@@ -304,32 +344,47 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
                     else:
                         leftover = Seq("")
                     seq = seq.reverse_complement()
-                    prot = seq[:-endpos].translate()
+                    if endpos == 0:
+                        prot = seq.translate()
+                    else:
+                        prot = seq[:-endpos].translate()
 
                     bool_ptc = "*" in prot
                     if bool_ptc:
                         ptc_pos = ptc_pos_from_prot(prot, '*')
-                        ptc_prot_len = len(prot) 
+                        ptc_prot_len = len(prot)
+                        ptc_coord = (min(ptc_pos) + 1)*3 
 
                     allprot = allprot+prot
                 
                 #store a long_exon tag, only add this junction to list if it goes on to cause no PTCs that are not in long exons
-                if bool_ptc and i != len(s)-2:
-                    ptc_coord = (min(ptc_pos) + 1)*3
-                    #55nt rule
-                    if i == len(s)-4 and ptc_prot_len*3-ptc_coord < 55:
-                        break
-                    elif exlen + 1 > 407:
-                        bool_long_exon = True
-                        break
-                    else:
-                        break
-            if bool_long_exon:
-                long_exons.append(junc)
-                ptc_distances.append(ptc_prot_len*3 - ptc_coord)
-                ptc_exon_lens.append(ptc_prot_len*3)
-                break
-    return long_exons, ptc_distances, ptc_exon_lens
+            #     if bool_ptc and i != len(s)-2:
+            #         ptc_coord = (min(ptc_pos) + 1)*3
+            #         #55nt rule
+            #         if i == len(s)-4 and ptc_prot_len*3-ptc_coord < 55:
+            #             break
+            #         elif exlen + 1 > 407:
+            #             bool_long_exon = True
+            #             break
+            #         else:
+            #             break
+            # if bool_long_exon:
+            #     long_exons.append(junc)
+            #     ptc_distances.append(ptc_prot_len*3 - ptc_coord)
+            #     ptc_exon_lens.append(ptc_prot_len*3)
+            #     break
+            # else:
+                if bool_ptc and i != len(s)-2 and not (i == len(s)-4 and ptc_prot_len*3 - ptc_coord < 55):
+            
+                    possible_distances.append(ptc_prot_len*3 - ptc_coord)
+                    possible_lens.append(ptc_prot_len*3)
+                    break
+
+        if len(possible_distances) != 0:
+            ptc_distances.append(mode(possible_distances))
+            ptc_exon_lens.append(mode(possible_lens))
+            ptc_junctions.append(junc)
+    return ptc_junctions, ptc_distances, ptc_exon_lens
 
 def check_utrs(junc,utrs):
     '''
@@ -836,11 +891,17 @@ def ClassifySpliceJunction(options):
             gene_juncs[info].append(junc[0])
 
     fout = open(f"{rundir}/{outprefix}_junction_classifications.txt",'w')
-    fout.write("\t".join(["Gene_name","Intron_coord","Annot","Coding", "UTR", "Long_exon", "Exons_before", "Exons_after","Nuc_rule"])+'\n')
+    fout.write("\t".join(["Gene_name","Intron_coord","Annot","Coding", "UTR","Nuc_rule"])+'\n')
     lout = open(f"{rundir}/{outprefix}_long_exon_distances.txt",'w')
     lout.write("\t".join(["Gene_name","Intron_coord","PTC_position","Exon_length"])+'\n')
+    eout = open(f"{rundir}/{outprefix}_exon_stats.txt",'w')
+    eout.write("\t".join(["Gene_name","Intron_coord","Exons_before","Exons_after"])+'\n')
+    nout = open(f"{rundir}/{outprefix}_nuc_rule_distances.txt",'w')
+    nout.write("\t".join(["Gene_name","Intron_coord","ejc_distance"])+'\n')
 
+    nuc_out = open(f"{rundir}/{outprefix}_nuc_rule_proteins.txt",'w')
     for gene_name, chrom, strand in gene_juncs:
+
         sys.stdout.write(f"Processing {gene_name} ({chrom}:{strand})\n")
         
         query_juncs = gene_juncs[(gene_name,chrom,strand)] # from LeafCutter perind file
@@ -868,16 +929,16 @@ def ClassifySpliceJunction(options):
         old_junc_pass = junc_pass
         junc_pass = {}
         junc_pass['normal'] = old_junc_pass
-        junc_pass['long_exon'], ptc_distances, ptc_exon_lens = long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
-        junc_pass['exons_before'], junc_pass['exons_after'] = many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
-        junc_pass['nuc_rule'] = nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
+        #junc_pass['long_exon'], 
+        ptc_junctions, ptc_distances, ptc_exon_lens = long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
+        exons_before, exons_after = many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
+        junc_pass['nuc_rule'], ejc_distances, nuc_prots = nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         for j in junctions:
+
             bool_pass = j in junc_pass['normal'] or j in g_info[gene_name]['pcjunctions']
             bool_fail = j in failing_juncs
             utr = False
-            long_exon = j in junc_pass['long_exon'] and j not in g_info[gene_name]['pcjunctions']
-            exons_before = j in junc_pass['exons_before'] and j not in g_info[gene_name]['pcjunctions']
-            exons_after = j in junc_pass['exons_after'] and j not in g_info[gene_name]['pcjunctions']
+            #long_exon = j in junc_pass['long_exon'] and j not in g_info[gene_name]['pcjunctions']
             nuc_rule = j in junc_pass['nuc_rule'] and j not in g_info[gene_name]['pcjunctions']
             if not bool_pass:
                 # Check that it's not in UTR                
@@ -892,13 +953,27 @@ def ClassifySpliceJunction(options):
             #print("%s %s %s junction: %s tested: %s utr: %s coding: %s annotated: %s "%(chrom, strand, gene_name, j, tested,utr, bool_pass, annotated))
             
             fout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
-                                  str(annotated), str(bool_pass), str(utr), str(long_exon), str(exons_before), str(exons_after), str(nuc_rule)])+'\n')
+                                  str(annotated), str(bool_pass), str(utr), str(nuc_rule)])+'\n')
             
-        for w in range(len(junc_pass['long_exon'])):
-            j = junc_pass['long_exon'][w]
-            lout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
-                                str(ptc_distances[w]), str(ptc_exon_lens[w])])+'\n')
+        for w in range(len(ptc_junctions)):
+            j = ptc_junctions[w]
+            if j not in g_info[gene_name]['pcjunctions']:
+                lout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
+                                    str(ptc_distances[w]), str(ptc_exon_lens[w])])+'\n')
+        for j in exons_before:
+            if j not in g_info[gene_name]['pcjunctions']:
+                eout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
+                                    str(exons_before[j]), str(exons_after[j])])+'\n')
+        for w in range(len(junc_pass['nuc_rule'])):
+            j = junc_pass['nuc_rule'][w]
+            if j not in g_info[gene_name]['pcjunctions']:
+                nout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
+                                    str(ejc_distances[w])])+'\n') 
+        for i in range(len(nuc_prots['prot'])):
 
+            nuc_out.write('\t'.join([nuc_prots['gene'][i], str(nuc_prots['transcript'][i]),
+                                    str(nuc_prots['junction'][i]), str(nuc_prots['prot'][i])])+'\n') 
+                
 def boolean_to_bit(bool_vec):
     # Convert boolean vector to string of "1"s and "0"s
     bin_str = ''.join(['1' if b else '0' for b in bool_vec])
@@ -987,6 +1062,7 @@ if __name__ == "__main__":
     from Bio.Seq import Seq
     import pyfastx
     from bisect import insort
+    from statistics import mode
     
 
     parser = argparse.ArgumentParser(description='SpliceJunctionClassifier')
