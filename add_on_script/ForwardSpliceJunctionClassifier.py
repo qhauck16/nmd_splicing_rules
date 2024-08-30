@@ -530,8 +530,10 @@ def check_utrs(junc,strand,start_codons,stop_codons):
         end = max(all_stop_coords)
     else:
         start = min(all_stop_coords)
-        end = min(all_start_coords)
-    if junc[0] < start or junc[0] > end:
+        end = max(all_start_coords)
+    min_junc = min(junc)
+    max_junc = max(junc)
+    if min_junc < start or max_junc > end:
         return True
     return False
 
@@ -1048,15 +1050,6 @@ def ClassifySpliceJunction(options):
     dout = open(f"{rundir}/{outprefix}_distances_from_start.txt",'w')
     dout.write("\t".join(["Gene_name","Intron_coord","distance_from_start"])+'\n')
     
-    temp_exact = open(f"{rundir}/{outprefix}_exact.txt",'w')
-    temp_nmd_exact = open(f"{rundir}/{outprefix}_nmd_exact.txt",'w')
-
-
-    nuc_out = open(f"{rundir}/{outprefix}_nuc_rule_proteins.txt",'w')
-    junc_numbers = [0, 0, 0]
-    junc_length = 0
-    junc_fail_length = 0
-    junc_pass_length = 0
     for gene_name, chrom, strand in gene_juncs:
 
         sys.stdout.write(f"Processing {gene_name} ({chrom}:{strand})\n")
@@ -1083,8 +1076,6 @@ def ClassifySpliceJunction(options):
         junc_pass = set(junc_pass.keys())
         failing_juncs = junc_fail.difference(junc_pass)
         junc_length += len(junctions)
-        junc_fail_length += len(failing_juncs)
-        junc_pass_length += len(junc_pass)
 
 
         old_junc_pass = junc_pass
@@ -1105,6 +1096,7 @@ def ClassifySpliceJunction(options):
                 tested = False
             annotated = j in g_info[gene_name]['junctions']
             utr = check_utrs(j, strand, start_codons, stop_codons)
+            
             #if not bool_pass and annotated:
             #print("%s %s %s junction: %s tested: %s utr: %s coding: %s annotated: %s "%(chrom, strand, gene_name, j, tested,utr, bool_pass, annotated))
             
@@ -1130,7 +1122,7 @@ def ClassifySpliceJunction(options):
                 j = start_rule[i]
                 dout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
                                     str(start_distances[i])])+'\n')
-
+                
 def boolean_to_bit(bool_vec):
     # Convert boolean vector to string of "1"s and "0"s
     bin_str = ''.join(['1' if b else '0' for b in bool_vec])
