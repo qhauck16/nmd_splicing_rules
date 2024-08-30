@@ -70,7 +70,7 @@ def start_proximal(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
                 exon_coord.sort()
                 exon_coord = tuple(exon_coord)
                 exlen = int(exon_coord[1])-int(exon_coord[0])
-                if exlen > 1500:
+                if exlen > 1000:
                     break
 
                 """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
@@ -82,9 +82,10 @@ def start_proximal(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
                     seq = leftover + Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
                     if endpos == 0:
                         prot = seq.translate()
+                        leftover = Seq("")
                     else:
                         prot = seq[:-endpos].translate()
-                    leftover = seq[-endpos:]                                                                                                               
+                        leftover = seq[-endpos:]                                                                                                               
 
 
                     bool_ptc = "*" in prot 
@@ -114,24 +115,7 @@ def start_proximal(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         if len(distance_from_start) != 0:        
             distances.append(mode(distance_from_start))
             start_rule.append(junc)
-            #     if bool_ptc:
-            #         ptc_coord = [(x + 1)*3 for x in ptc_pos]
 
-            #         if i == len(s)-2:
-            #             bool_last_exon = True
-            #             distance_to_last_ejc = 0
-            #             break
-            #         elif i == len(s)-4: #and ptc_prot_len*3-min(ptc_coord) < 70:
-            #             bool_55nt = True
-            #             distance_to_last_ejc = ptc_prot_len*3-min(ptc_coord) 
-            #             break
-            #         else:
-            #             break
-
-            # if (bool_last_exon or bool_55nt):
-            #     nuc_rule.append(junc)
-            #     distances.append(distance_to_last_ejc)
-            #     break
     return start_rule, distances
 
 
@@ -139,6 +123,8 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
     qualifying_prots = {'prot': [], 'gene': [], 'junction': [], 'transcript': []}
     distances = []
     nuc_rule = []
+    unique_juncs = []
+    unique_juncs_pre_ptc = []
     for junc in failing_juncs:
         junc_break = False
         distances_to_ejc = []
@@ -177,28 +163,28 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
             allprot = Seq("")
             leftover = Seq("")
 
-            bool_last_exon = False
-            bool_55nt = False
             for i in range(0, len(s)-1, 2):
                 exon_coord = s[i:i+2]
                 exon_coord.sort()
                 exon_coord = tuple(exon_coord)
                 exlen = int(exon_coord[1])-int(exon_coord[0])
-                if exlen > 1500:
+                if exlen > 1000:
                     break
 
                 """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
                 """Quinn Comment: Coordinates from PERIND file and GTF file are exon start and end coordinates, so 
                 we must add 1 to length"""
                 endpos = (len(leftover)+exlen+1)%3
-
+                if junc not in unique_juncs_pre_ptc:
+                    unique_juncs_pre_ptc.append(junc)
                 if strand == '+':
                     seq = leftover + Seq(fa.fetch(chrom, (exon_coord[0],exon_coord[1])))
                     if endpos == 0:
                         prot = seq.translate()
+                        leftover = Seq("")
                     else:
                         prot = seq[:-endpos].translate()
-                    leftover = seq[-endpos:]                                                                                                               
+                        leftover = seq[-endpos:]                                                                                                               
 
 
                     bool_ptc = "*" in prot 
@@ -219,7 +205,8 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
                     else:
                         prot = seq[:-endpos].translate()
 
-                    bool_ptc = "*" in prot
+                    bool_ptc = '*' in prot
+
                     if bool_ptc:
                         ptc_pos = ptc_pos_from_prot(prot, '*')
                         ptc_prot_len = len(prot) 
@@ -227,6 +214,8 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
                     allprot = allprot+prot
                 
                 if bool_ptc:
+                    if junc not in unique_juncs:
+                        unique_juncs.append(junc)
                     ptc_coord = [(x + 1)*3 for x in ptc_pos]
                     if i != len(s)-2 and i != len(s) - 4:
                         junc_break = True
@@ -248,26 +237,9 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
         if not junc_break and len(distances_to_ejc) != 0:
             nuc_rule.append(junc)
             distances.append(mode(distances_to_ejc))
-            
-            #     if bool_ptc:
-            #         ptc_coord = [(x + 1)*3 for x in ptc_pos]
+    numbers = [len(failing_juncs), len(unique_juncs_pre_ptc), len(unique_juncs)]
 
-            #         if i == len(s)-2:
-            #             bool_last_exon = True
-            #             distance_to_last_ejc = 0
-            #             break
-            #         elif i == len(s)-4: #and ptc_prot_len*3-min(ptc_coord) < 70:
-            #             bool_55nt = True
-            #             distance_to_last_ejc = ptc_prot_len*3-min(ptc_coord) 
-            #             break
-            #         else:
-            #             break
-
-            # if (bool_last_exon or bool_55nt):
-            #     nuc_rule.append(junc)
-            #     distances.append(distance_to_last_ejc)
-            #     break
-    return nuc_rule, distances, qualifying_prots
+    return nuc_rule, distances, qualifying_prots, numbers
 
 def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
 
@@ -505,7 +477,7 @@ def check_utrs(junc,utrs):
     return False
 
 def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name, 
-              verbose = False, exonLcutoff = 1500):
+              verbose = False, exonLcutoff = 1000):
     '''
     Compute whether there is a possible combination that uses the junction without
     inducing a PTC. We start with all annotated stop codon and go backwards.
@@ -1013,6 +985,7 @@ def ClassifySpliceJunction(options):
 
 
     nuc_out = open(f"{rundir}/{outprefix}_nuc_rule_proteins.txt",'w')
+    junc_numbers = [0,0,0]
     for gene_name, chrom, strand in gene_juncs:
 
         sys.stdout.write(f"Processing {gene_name} ({chrom}:{strand})\n")
@@ -1033,7 +1006,6 @@ def ClassifySpliceJunction(options):
         junc_pass, junc_fail, proteins = solve_NMD(chrom,strand,junctions, 
                                                    start_codons, stop_codons, 
                                                    gene_name)
-        
 
         junc_fail = set(junc_fail.keys())
         junc_pass = set(junc_pass.keys())
@@ -1042,10 +1014,10 @@ def ClassifySpliceJunction(options):
         old_junc_pass = junc_pass
         junc_pass = {}
         junc_pass['normal'] = old_junc_pass
-        #junc_pass['long_exon'], 
         ptc_junctions, ptc_distances, ptc_exon_lens = long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         exons_before, exons_after = many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
-        junc_pass['nuc_rule'], ejc_distances, nuc_prots = nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
+        junc_pass['nuc_rule'], ejc_distances, nuc_prots, numbers = nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
+        junc_numbers = [junc_numbers[i]+numbers[i] for i in range(3)]
         start_rule, start_distances = start_proximal(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         for j in junctions:
 
@@ -1089,7 +1061,7 @@ def ClassifySpliceJunction(options):
                 j = start_rule[i]
                 dout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
                                     str(start_distances[i])])+'\n')
-                
+    print(junc_numbers)        
 def boolean_to_bit(bool_vec):
     # Convert boolean vector to string of "1"s and "0"s
     bin_str = ''.join(['1' if b else '0' for b in bool_vec])
@@ -1179,7 +1151,7 @@ if __name__ == "__main__":
     import pyfastx
     from bisect import insort
     from statistics import mode
-    
+    import time
 
     parser = argparse.ArgumentParser(description='SpliceJunctionClassifier')
 
