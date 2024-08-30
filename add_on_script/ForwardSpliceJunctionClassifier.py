@@ -1075,7 +1075,6 @@ def ClassifySpliceJunction(options):
         junc_fail = set(junc_fail.keys())
         junc_pass = set(junc_pass.keys())
         failing_juncs = junc_fail.difference(junc_pass)
-        junc_length += len(junctions)
 
 
         old_junc_pass = junc_pass
@@ -1095,7 +1094,10 @@ def ClassifySpliceJunction(options):
             else:
                 tested = False
             annotated = j in g_info[gene_name]['junctions']
-            utr = check_utrs(j, strand, start_codons, stop_codons)
+            if len(start_codons) != 0 and len(stop_codons) != 0:
+                utr = check_utrs(j, strand, start_codons, stop_codons)
+            else:
+                utr = False
             
             #if not bool_pass and annotated:
             #print("%s %s %s junction: %s tested: %s utr: %s coding: %s annotated: %s "%(chrom, strand, gene_name, j, tested,utr, bool_pass, annotated))
