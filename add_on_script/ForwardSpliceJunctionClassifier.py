@@ -516,6 +516,8 @@ def check_utrs(junc,strand,start_codons,stop_codons):
     checks if junction is within UTR
     '''
     all_start_coords = []
+    start_codons = list(start_codons)
+    stop_codons = list(stop_codons)
     for i in range(len(start_codons)):
         all_start_coords.append(start_codons[i][0])
         all_start_coords.append(start_codons[i][1])
@@ -1073,7 +1075,7 @@ def ClassifySpliceJunction(options):
             sys.stdout.write(f"LeafCutter junctions ({len(query_juncs)}) All junctions ({len(junctions)}) Start codons ({len(start_codons)}) Stop codons ({len(stop_codons)}) \n")
 
         
-        junc_pass, junc_fail = solve_NMD(chrom,strand,junctions, 
+        junc_pass, junc_fail, proteins = solve_NMD(chrom,strand,junctions, 
                                             start_codons, stop_codons, 
                                             gene_name)
 
@@ -1088,7 +1090,6 @@ def ClassifySpliceJunction(options):
         old_junc_pass = junc_pass
         junc_pass = {}
         junc_pass['normal'] = old_junc_pass
-        #junc_pass['long_exon'], 
         ptc_junctions, ptc_distances, ptc_exon_lens = long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         exons_before, exons_after = many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         junc_pass['nuc_rule'], ejc_distances = nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, nmd_tx_by_gene)
@@ -1097,9 +1098,6 @@ def ClassifySpliceJunction(options):
 
             bool_pass = j in junc_pass['normal'] or j in g_info[gene_name]['pcjunctions']
             bool_fail = j in failing_juncs
-            # utr = False
-            # long_exon = j in junc_pass['long_exon'] and j not in g_info[gene_name]['pcjunctions']
-            # nuc_rule = j in junc_pass['nuc_rule'] and j not in g_info[gene_name]['pcjunctions']
 
             if bool_fail or bool_pass:
                 tested = True
