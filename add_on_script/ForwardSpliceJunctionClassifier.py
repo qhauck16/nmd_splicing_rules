@@ -938,8 +938,6 @@ def ClassifySpliceJunction(options):
     eout.write("\t".join(["Gene_name","Intron_coord","Exons_before","Exons_after"])+'\n')
     nout = open(f"{rundir}/{outprefix}_nuc_rule_distances.txt",'w')
     nout.write("\t".join(["Gene_name","Intron_coord","ejc_distance"])+'\n')
-    dout = open(f"{rundir}/{outprefix}_distances_from_start.txt",'w')
-    dout.write("\t".join(["Gene_name","Intron_coord","distance_from_start"])+'\n')
     
     for gene_name, chrom, strand in gene_juncs:
 
@@ -974,7 +972,6 @@ def ClassifySpliceJunction(options):
         ptc_junctions, ptc_distances, ptc_exon_lens = long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         exons_before, exons_after = many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         junc_pass['nuc_rule'], ejc_distances = nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, nmd_tx_by_gene)
-        start_rule, start_distances = start_proximal(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         for j in junctions:
 
             bool_pass = j in junc_pass['normal'] or j in g_info[gene_name]['pcjunctions']
@@ -1010,11 +1007,6 @@ def ClassifySpliceJunction(options):
             if j not in g_info[gene_name]['pcjunctions']:
                 nout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
                                     str(ejc_distances[w])])+'\n') 
-        for i in range(len(start_rule)):
-            if j not in g_info[gene_name]['pcjunctions']:
-                j = start_rule[i]
-                dout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
-                                    str(start_distances[i])])+'\n')
                 
 def boolean_to_bit(bool_vec):
     # Convert boolean vector to string of "1"s and "0"s
