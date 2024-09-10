@@ -40,17 +40,15 @@ def ptc_pos_from_prot(prot, sub):
         start += 1
 
 
-def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, nmd_tx_by_gene):
-    qualifying_prots = {'prot': [], 'gene': [], 'junction': [], 'transcript': []}
+def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, nmd_tx_by_gene, exonLcutoff = 2000):
     distances = []
     nuc_rule = []
-    unique_juncs = []
     unique_juncs_pre_ptc = []
-    annotated_exact_nmd = []
-    just_annotated_exact = []
+    last_exon_length = {}
     for junc in failing_juncs:
         junc_break = False
         distances_to_ejc = []
+        last_exon_lengths = []
         possible_transcripts = transcripts_by_gene[gene_name]
         if gene_name in nmd_tx_by_gene.keys():
             nmd_transcripts = nmd_tx_by_gene[gene_name]
@@ -62,6 +60,11 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
                 nmd_transcript = True
             else:
                 nmd_transcript = False
+
+            if nmd_transcript: #remove junctions in NMD transcripts completely
+                junc_break = True
+                break
+
             s = list(possible_transcripts[transcript])
             #cast to list of integers
             s = [eval(j) for j in s]
@@ -81,11 +84,6 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
                 #if this does not fit in our transcript, move on
                     if not (s[i-1] > s[i-2] and s[i] < s[i+1]):
                         failing_junc = True
-                    
-                    if junc[0] == junction[0] and junc[1] == junction[1]:
-                        annotated_exact = True
-                    else:
-                        annotated_exact = False
 
                     break  
 
@@ -103,7 +101,7 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
                 exon_coord.sort()
                 exon_coord = tuple(exon_coord)
                 exlen = int(exon_coord[1])-int(exon_coord[0])
-                if exlen > 1000:
+                if exlen > exonLcutoff:
                     break
 
                 """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
@@ -148,15 +146,14 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
                     allprot = allprot+prot
                 
                 if bool_ptc:
-                    if junc not in unique_juncs:
-                        unique_juncs.append(junc)
                     ptc_coord = [(x + 1)*3 for x in ptc_pos]
-                    if (i != len(s)-2 and i != len(s) - 4) or nmd_transcript: #or (nmd_transcript and i != len(s)-4 and ptc_prot_len*3-min(ptc_coord) < 51):
+                    if (i != len(s)-2 and i != len(s) - 4): #or (nmd_transcript and i != len(s)-4 and ptc_prot_len*3-min(ptc_coord) < 51):
                         junc_break = True
                         break
                     else:
                         if i == len(s) - 2:
                             distances_to_ejc.append(-1)
+                            last_exon_lengths.append(exlen)
                             break
                         else:
                             distances_to_ejc.append(ptc_prot_len*3-min(ptc_coord))
@@ -171,10 +168,12 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
             else:
                 nuc_rule.append(junc)
                 distances.append(mode(distances_to_ejc))
+                if mode(distances_to_ejc) == -1:
+                    last_exon_length[junc] = mode(last_exon_lengths)
 
-    return nuc_rule, distances
+    return nuc_rule, distances, last_exon_length
 
-def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
+def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, exonLcutoff = 2000):
 
     before = {}
     after = {}
@@ -218,7 +217,7 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
                 exon_coord.sort()
                 exon_coord = tuple(exon_coord)
                 exlen = int(exon_coord[1])-int(exon_coord[0])
-                if exlen > 1000:
+                if exlen > exonLcutoff:
                     break
 
                 """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
@@ -277,7 +276,7 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
     return before, after
 
 
-def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom):
+def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, exonLcutoff = 1000):
     ptc_junctions = []
     ptc_exon_lens = []
     ptc_distances = []
@@ -328,7 +327,7 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
                 exon_coord.sort()
                 exon_coord = tuple(exon_coord)
                 exlen = int(exon_coord[1])-int(exon_coord[0])
-                if exlen > 1000:
+                if exlen > exonLcutoff:
                     break
 
                 """Quinn Comment: find start position relative to named start of this exon and translate to protein"""
@@ -417,11 +416,11 @@ def check_utrs(junc,strand,start_codons,stop_codons):
         all_stop_coords.append(stop_codons[i][0])
         all_stop_coords.append(stop_codons[i][1])
     if strand == '+':
-        start = min(all_start_coords)
-        end = max(all_stop_coords)
+        start = max(all_start_coords)
+        end = min(all_stop_coords)
     else:
-        start = min(all_stop_coords)
-        end = max(all_start_coords)
+        start = max(all_stop_coords)
+        end = min(all_start_coords)
     min_junc = min(junc)
     max_junc = max(junc)
     if min_junc < start or max_junc > end:
@@ -429,7 +428,7 @@ def check_utrs(junc,strand,start_codons,stop_codons):
     return False
 
 def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name, 
-              verbose = False, exonLcutoff = 1000):
+              verbose = False, exonLcutoff = 2000):
     '''
     Compute whether there is a possible combination that uses the junction without
     inducing a PTC. We start with all annotated stop codon and go backwards.
@@ -938,7 +937,9 @@ def ClassifySpliceJunction(options):
     eout.write("\t".join(["Gene_name","Intron_coord","Exons_before","Exons_after"])+'\n')
     nout = open(f"{rundir}/{outprefix}_nuc_rule_distances.txt",'w')
     nout.write("\t".join(["Gene_name","Intron_coord","ejc_distance"])+'\n')
-    
+    xout = open(f"{rundir}/{outprefix}_last_exon_lengths.txt",'w')
+    xout.write("\t".join(["Gene_name","Intron_coord","last_exon_length"])+'\n')
+
     for gene_name, chrom, strand in gene_juncs:
 
         sys.stdout.write(f"Processing {gene_name} ({chrom}:{strand})\n")
@@ -971,7 +972,7 @@ def ClassifySpliceJunction(options):
         junc_pass['normal'] = old_junc_pass
         ptc_junctions, ptc_distances, ptc_exon_lens = long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
         exons_before, exons_after = many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom)
-        junc_pass['nuc_rule'], ejc_distances = nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, nmd_tx_by_gene)
+        junc_pass['nuc_rule'], ejc_distances, last_exon_length = nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, nmd_tx_by_gene)
         for j in junctions:
 
             bool_pass = j in junc_pass['normal'] or j in g_info[gene_name]['pcjunctions']
@@ -1007,6 +1008,9 @@ def ClassifySpliceJunction(options):
             if j not in g_info[gene_name]['pcjunctions']:
                 nout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]}',
                                     str(ejc_distances[w])])+'\n') 
+        for j in last_exon_length:
+            if j not in g_info[gene_name]['pcjunctions']:
+                xout.write(str(gene_name) + '\t' + str(j) + '\t' + str(last_exon_length[j]) +'\n')
                 
 def boolean_to_bit(bool_vec):
     # Convert boolean vector to string of "1"s and "0"s
