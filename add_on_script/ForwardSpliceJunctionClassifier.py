@@ -55,7 +55,7 @@ def ptc_pos_from_prot(prot, sub):
         start += 1
 
 
-def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, nmd_tx_by_gene, fa, exonLcutoff = 1000):
+def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, nmd_tx_by_gene, fa, exonLcutoff = 2000):
     distances = []
     nuc_rule = []
     unique_juncs_pre_ptc = []
@@ -443,7 +443,7 @@ def check_utrs(junc,strand,start_codons,stop_codons):
     return False
 
 def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name, fa, 
-              verbose = False, exonLcutoff = 1000):
+              verbose = False, exonLcutoff = 2000):
     '''
     Compute whether there is a possible combination that uses the junction without
     inducing a PTC. We start with all annotated stop codon and go backwards.
@@ -952,7 +952,7 @@ def ClassifySpliceJunction(
             gene_juncs[info].append(junc[0])
 
     fout = open(f"{rundir}/{outprefix}_junction_classifications.txt",'w')
-    fout.write("\t".join(["Gene_name","Intron_coord","Strand","Annot","Coding","UTR"])+'\n')
+    fout.write("\t".join(["Gene_name","Intron_coord","Strand","Annot","Coding","UTR","GencodePC"])+'\n')
     lout = open(f"{rundir}/{outprefix}_long_exon_distances.txt",'w')
     lout.write("\t".join(["Gene_name","Intron_coord","PTC_position","Exon_length"])+'\n')
     eout = open(f"{rundir}/{outprefix}_exon_stats.txt",'w')
@@ -996,7 +996,8 @@ def ClassifySpliceJunction(
         junc_pass['nuc_rule'], ejc_distances, last_exon_length = nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, nmd_tx_by_gene, fa)
         for j in junctions:
 
-            bool_pass = j in junc_pass['normal'] or j in g_info[gene_name]['pcjunctions']
+            bool_pass = j in junc_pass['normal']
+            gencode = j in g_info[gene_name]['pcjunctions']
             bool_fail = j in failing_juncs
 
             if bool_fail or bool_pass:
@@ -1015,7 +1016,7 @@ def ClassifySpliceJunction(
             
             #NOTE: revert to leafcutter2 bed format coordiantes for junctions
             fout.write('\t'.join([gene_name, f'{chrom}:{j[0]}-{j[1]-1}',strand,
-                                  str(annotated), str(bool_pass), str(utr)])+'\n')
+                                  str(annotated), str(bool_pass), str(utr), str(gencode)])+'\n')
             
         for w in range(len(ptc_junctions)):
             j = ptc_junctions[w]
