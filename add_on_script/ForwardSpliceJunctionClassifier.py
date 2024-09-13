@@ -10,7 +10,7 @@ import gzip
 import pickle
 import sys
 from bisect import insort
-from statistics import mean, median, mode
+from statistics import mean, median, mode, multimode
 
 import pyfastx
 from Bio.Seq import Seq
@@ -182,9 +182,7 @@ def nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom
                 distances.append(max(distances_to_ejc))
             else:
                 nuc_rule.append(junc)
-                distances.append(mode(distances_to_ejc))
-                if mode(distances_to_ejc) == -1:
-                    last_exon_length[junc] = mode(last_exon_lengths)
+                distances.append(max(multimode(distances_to_ejc)))
 
     return nuc_rule, distances, last_exon_length
 
@@ -286,8 +284,8 @@ def many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom,
                     possible_exons_after.append(exons_after)
                     break
         if len(possible_exons_before) != 0:
-            before[junc] = mode(possible_exons_before)
-            after[junc] = mode(possible_exons_after)
+            before[junc] = min(multimode(possible_exons_before))
+            after[junc] = min(multimode(possible_exons_after))
     return before, after
 
 
@@ -411,8 +409,8 @@ def long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chro
                     break
 
         if len(possible_distances) != 0:
-            ptc_distances.append(mode(possible_distances))
-            ptc_exon_lens.append(mode(possible_lens))
+            ptc_distances.append(min(multimode(possible_distances)))
+            ptc_exon_lens.append(min(multimode(possible_lens)))
             ptc_junctions.append(junc)
     return ptc_junctions, ptc_distances, ptc_exon_lens
 
@@ -993,10 +991,10 @@ def ClassifySpliceJunction(
         junc_pass['normal'] = old_junc_pass
         ptc_junctions, ptc_distances, ptc_exon_lens = long_exon_finder(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, fa)
         exons_before, exons_after = many_junctions(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, fa)
-        junc_pass['nuc_rule'], ejc_distances, last_exon_length = nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, nmd_tx_by_gene, fa)
+        junc_pass['nuc_rule'], ejc_distances = nucleotide_rule(failing_juncs, gene_name, transcripts_by_gene, strand, chrom, nmd_tx_by_gene, fa)
         for j in junctions:
 
-            bool_pass = j in junc_pass['normal']
+            bool_pass = j in junc_pass['normal'] 
             gencode = j in g_info[gene_name]['pcjunctions']
             bool_fail = j in failing_juncs
 
