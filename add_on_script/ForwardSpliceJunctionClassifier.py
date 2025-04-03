@@ -549,20 +549,46 @@ def solve_NMD(chrom, strand, junc, start_codons, stop_codons,gene_name, fa,
                     dic_terminus[terminus] = [tuple(s)]
             
             last_pos = s[-1]
+        
+        #fix for abnormally long exons
+            next_exon_max = 0
+
+            ptc_ahead = False
+            while ptc_ahead == False:
+                next_exon_max += 500
+                endpos = (len(leftover)+next_exon_max+1)%3
+                if strand == '+':
+                    seq = leftover + Seq(fa.fetch(chrom, (last_pos, last_pos+next_exon_max)))
+                    if endpos == 0:
+                        prot = seq.translate()
+                        
+                    else:
+                        prot = seq[:-endpos].translate()
+                                                                                                                                    
+                else:
+                    seq = Seq(fa.fetch(chrom, (last_pos-next_exon_max,last_pos)))+leftover
+                    if endpos > 0:
+                        seq = seq.reverse_complement()
+                        prot = seq[:-endpos].translate()
+                    else:
+                        seq = seq.reverse_complement()
+                        prot = seq.translate()
             
+                ptc_ahead = "*" in prot
+
             """Quinn Comment: check the last position of our seed to see if it is close to a start codon, within a potential exon's length,
              and add your seed plus this start codon to final_check """
             for stop in stop_codons:                
-                if strand == "+" and last_pos < stop[0] and stop[0]-last_pos < exonLcutoff:
+                if strand == "+" and last_pos < stop[0] and stop[0]-last_pos < next_exon_max:
                     final_check.append(s+[stop[1]])
-                elif strand == "-" and last_pos > stop[1] and last_pos-stop[1] < exonLcutoff:
+                elif strand == "-" and last_pos > stop[1] and last_pos-stop[1] < next_exon_max:
                     final_check.append(s+[stop[0]]) 
 
             """Quinn Comment: add all possible places to go from our last_pos to the seed (nested list)"""
             for j0,j1 in junc:                
-                if strand == "+" and last_pos < j0 and j0-last_pos < exonLcutoff:
+                if strand == "+" and last_pos < j0 and j0-last_pos < next_exon_max:
                     new_seed.append(s+[j0,j1])
-                if strand == "-" and last_pos > j1 and last_pos-j1 < exonLcutoff: 
+                if strand == "-" and last_pos > j1 and last_pos-j1 < next_exon_max: 
                     new_seed.append(s+[j1,j0])
                     
         """Quinn Comment: Exited from s in seed loop, now we check our final_checks of the full paths, we do not
